@@ -111,6 +111,51 @@ def log_event(level: str, component: str, event: str, details: dict):
         conn.commit()
 
 
+def sync_training_candidate_outcome(signal_row: dict, outcome: str, r_mult: float, updates_meta: dict | None) -> int:
+    outcome_label = "NEUTRAL" if outcome == "EXPIRED" else outcome
+    meta = updates_meta or {}
+    pnl_pct = meta.get("pnl_pct")
+    mae = meta.get("adverse_excursion")
+    horizon_bars = max(int((datetime.now(timezone.utc) - signal_row["ts"]).total_seconds() // 900), 0)
+
+    with db_conn() as conn, conn.cursor() as cur:
+        cur.execute(
+            """
+            UPDATE training_candidates
+            SET outcome_label = %s,
+                outcome_pct = %s,
+                mae_pct = %s,
+                horizon_bars = %s,
+                trace_data = COALESCE(trace_data, '{}'::jsonb) || %s::jsonb
+            WHERE id = (
+                SELECT id
+                FROM training_candidates
+                WHERE symbol = %s
+                  AND side = %s
+                  AND rejection_gate IS NULL
+                  AND outcome_label IS NULL
+                  AND ts BETWEEN %s - INTERVAL '30 minutes' AND %s + INTERVAL '30 minutes'
+                ORDER BY ABS(EXTRACT(EPOCH FROM (ts - %s))) ASC
+                LIMIT 1
+            )
+            """,
+            (
+                outcome_label,
+                pnl_pct,
+                mae,
+                horizon_bars,
+                json.dumps({"realized_r": r_mult, "signal_id": str(signal_row["signal_id"])}),
+                signal_row["pair"],
+                signal_row["side"],
+                signal_row["ts"],
+                signal_row["ts"],
+                signal_row["ts"],
+            ),
+        )
+        conn.commit()
+        return cur.rowcount
+
+
 def fetch_since(symbol: str, start_ms: int, interval: str = "15m", limit: int = 1000):
     # Determine if it's a futures pair (usually ends in USDT or has a specific format)
     # For Binance, futures klines are at /fapi/v1/klines
@@ -206,7 +251,7 @@ def resolve_signal(sig: dict) -> tuple[str | None, float | None, dict | None]:
             if low <= tp2:
                 return "WIN", 2.1, _meta(exit_price=tp2)
 
-    return None, None, {"adverse_excursion": max_adv_pct}
+    return None, None, {"adverse_excursion": max_adv_r}
 
 
 def run_once():
@@ -280,6 +325,14 @@ def run_once():
                     )
                     conn.commit()
                 updates += 1
+                synced = sync_training_candidate_outcome(row, outcome, r_mult, updates_meta)
+                if synced == 0:
+                    log_event("WARNING", "outcome_tracker", "training_candidate_sync_miss", {
+                        "signal_id": row["signal_id"],
+                        "pair": row["pair"],
+                        "side": row["side"],
+                        "outcome": outcome,
+                    })
                 
                 # Send Telegram alert for outcome
                 _send_outcome_alert(row, outcome, r_mult, updates_meta)
