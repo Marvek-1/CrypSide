@@ -1,6 +1,7 @@
 import type {Metadata} from 'next';
 import Link from 'next/link';
 import './globals.css'; // Global styles
+import RuntimeBadge from './components/RuntimeBadge';
 
 export const metadata: Metadata = {
   title: 'MoStar Sovereign Data Conduit',
@@ -62,6 +63,7 @@ export default function RootLayout({children}: {children: React.ReactNode}) {
             </nav>
           </div>
           <div className="flex items-center gap-4">
+             <RuntimeBadge />
              <div className="bg-[#111] px-3 py-1 rounded border border-[#333] text-[10px] font-mono text-cyan-400">
                NODE: SECURE
              </div>

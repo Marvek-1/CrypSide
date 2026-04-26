@@ -12,6 +12,7 @@ Sealed:       2026-04-26
 
 import ast
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -21,6 +22,8 @@ WHITELIST_JSON = Path("observer_bundle/whitelist.json")
 G4_WHITELIST_PY = Path("observer_bundle/g4_whitelist.py")
 PWIN_MODEL = Path("pwin_model.pkl")
 RELABELED_CSV = Path("trades_relabeled.csv")
+ENV_EXAMPLE = Path(".env.example")
+DEPLOY_SCRIPT = Path("deploy.sh")
 
 ARCHIVE_PATH = Path("archive/2026-04-23_obsolete/g4_deployment")
 
@@ -31,11 +34,50 @@ FREQTRADE_BASE = "freqtrade.strategy"
 ADVISORY_NAMES = {"trades_relabeled.csv present", "pwin_model.pkl present"}
 RESULTS: list[tuple[str, bool, str]] = []
 
+LIVE_UNLOCK_POLICY = """
+LIVE UNLOCK REQUIRES:
+  - policy frozen BEFORE signal collection starts
+  - 200+ resolved live signals
+  - same policy_id for ALL 200+ signals
+  - Profit Factor >= 1.30
+  - confidence interval supports edge (95%)
+  - zero mid-sample rule edits
+  Every policy change resets the pocket clock to zero.
+"""
+
+PLACEHOLDER_MARKERS = (
+    "<replace_with",
+    "<db_",
+    "<db",
+    "your_",
+    "example",
+    "changeme",
+    "placeholder",
+    "xxxx",
+)
+
+
+def looks_like_live_secret(value: str) -> bool:
+    v = value.strip().strip('"').strip("'")
+    if not v:
+        return False
+    if len(v) <= 20:
+        return False
+
+    lowered = v.lower()
+    if any(marker in lowered for marker in PLACEHOLDER_MARKERS):
+        return False
+    if re.fullmatch(r"[0-9]+", v):
+        return False
+    if v.startswith("http://") or v.startswith("https://"):
+        return False
+    return True
+
 
 def record(name: str, passed: bool, detail: str = "") -> bool:
     RESULTS.append((name, passed, detail))
     icon = "✅" if passed else ("⚠️ " if name in ADVISORY_NAMES else "❌")
-    print(f"  {icon}  {name}" + (f"\n       {detail}" if detail else ""))
+    print(f"  {icon}  {name}" + (f"\n       {detail}" if (detail and not passed) else ""))
     return passed
 
 
@@ -127,13 +169,62 @@ def check_config() -> None:
         record(f"config has '{k}'", k in cfg)
 
 
+def check_deploy_env_guard() -> None:
+    print("\n[0] Phase 0 — deploy.sh secret guard")
+    if not DEPLOY_SCRIPT.exists():
+        record("deploy.sh exists", False, "Not yet created — add before any deployment")
+        return
+
+    content = DEPLOY_SCRIPT.read_text(encoding="utf-8", errors="ignore")
+    dangerous_patterns = [
+        "cp .env.example .env",
+        "cp .env.example .env.",
+        "copy .env.example .env",
+    ]
+
+    found = False
+    for pat in dangerous_patterns:
+        if pat in content:
+            record(
+                f"deploy.sh overwrites secrets: '{pat}'",
+                False,
+                "HARD FAIL — deployment must never overwrite real .env with placeholders",
+            )
+            found = True
+
+    if not found:
+        record("deploy.sh does not overwrite real secrets", True)
+
+
+def check_env_example_secrets() -> None:
+    print("\n[4] Secret leakage scan (.env.example)")
+    if not ENV_EXAMPLE.exists():
+        record(".env.example exists", False)
+        return
+
+    leaked: list[str] = []
+    for raw_line in ENV_EXAMPLE.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        if looks_like_live_secret(value):
+            leaked.append(key.strip())
+
+    record(
+        ".env.example contains placeholders only",
+        len(leaked) == 0,
+        f"Potential live secrets in keys: {', '.join(leaked)}" if leaked else "",
+    )
+
+
 def check_archive() -> None:
-    print("\n[4] Frozen archive invariant")
+    print("\n[5] Frozen archive invariant")
     record("Frozen archive exists", ARCHIVE_PATH.exists(), f"Missing: {ARCHIVE_PATH}")
 
 
 def check_g4() -> None:
-    print("\n[5] G4 whitelist module")
+    print("\n[6] G4 whitelist module")
     if not G4_WHITELIST_PY.exists():
         record("g4_whitelist.py exists", False)
         return
@@ -146,7 +237,7 @@ def check_g4() -> None:
 
 
 def check_whitelist() -> None:
-    print("\n[6] whitelist.json schema")
+    print("\n[7] whitelist.json schema")
     if not WHITELIST_JSON.exists():
         record("whitelist.json exists", False)
         return
@@ -190,7 +281,7 @@ def check_whitelist() -> None:
 
 
 def check_simulation_leak() -> None:
-    print("\n[7] Simulation leak (frontend gate files)")
+    print("\n[8] Simulation leak (frontend gate files)")
     bad_patterns = ["Math.random()", "hardcoded_pwin", "win_rate = 0.75"]
 
     gate_files = [
@@ -213,7 +304,7 @@ def check_simulation_leak() -> None:
 
 
 def check_artifacts() -> None:
-    print("\n[8] Pipeline artifacts (advisory)")
+    print("\n[9] Pipeline artifacts (advisory)")
     record(
         "trades_relabeled.csv present",
         RELABELED_CSV.exists(),
@@ -231,14 +322,21 @@ def main() -> None:
     print("=" * 50)
     print(f"   Dir: {Path('.').resolve()}")
 
+    check_deploy_env_guard()
     check_strategy()
     check_no_stale()
     check_config()
+    check_env_example_secrets()
     check_archive()
     check_g4()
     check_whitelist()
     check_simulation_leak()
     check_artifacts()
+
+    print("\n" + "=" * 50)
+    print("LIVE UNLOCK COVENANT")
+    print("=" * 50)
+    print(LIVE_UNLOCK_POLICY)
 
     print("\n" + "=" * 50)
     print("SUMMARY")

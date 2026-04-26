@@ -13,8 +13,9 @@ cp scanner.py api.py outcome_tracker.py ecosystem.idim.config.js requirements.tx
 cd "$APP_DIR"
 
 if [[ ! -f ".env" ]]; then
-  cp .env.example .env
-  echo "Created .env from .env.example — fill in DATABASE_URL / Telegram vars before first live run if needed."
+  echo "ERROR: .env is required and must be provisioned from secure secrets storage."
+  echo "Refusing to copy .env.example into production."
+  exit 1
 fi
 
 echo "[2/7] Creating Python virtual environment"
