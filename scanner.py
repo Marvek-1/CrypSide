@@ -29,6 +29,8 @@ import requests
 from dotenv import load_dotenv
 from telegram import Bot
 
+import config
+
 load_dotenv()
 
 DATABASE_URL = os.environ["DATABASE_URL"]
@@ -39,8 +41,8 @@ SCAN_INTERVAL_SECONDS = int(os.environ.get("SCAN_INTERVAL_SECONDS", "60"))
 LOOKBACK_15M = int(os.environ.get("LOOKBACK_15M", "500"))
 LOOKBACK_4H = int(os.environ.get("LOOKBACK_4H", "300"))
 
-LOGIC_VERSION = os.environ.get("LOGIC_VERSION", "v1.0-baseline-observer")
-CONFIG_VERSION = os.environ.get("CONFIG_VERSION", "v1.0-baseline-observer")
+LOGIC_VERSION = config.CURRENT_LOGIC_VERSION
+CONFIG_VERSION = config.CURRENT_CONFIG_VERSION
 
 # Historical observed out-of-sample baseline constants
 MIN_SIGNAL_SCORE = 45

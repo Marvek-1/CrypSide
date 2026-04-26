@@ -18,8 +18,8 @@ from pathlib import Path
 
 STRATEGY_FILE = Path("IdimIkangStrategy.py")
 CONFIG_FILE = Path("config.json")
-WHITELIST_JSON = Path("observer_bundle/whitelist.json")
-G4_WHITELIST_PY = Path("observer_bundle/g4_whitelist.py")
+WHITELIST_JSON = Path("whitelist.json")
+G4_WHITELIST_PY = Path("g4_whitelist_gate.py")
 PWIN_MODEL = Path("pwin_model.pkl")
 RELABELED_CSV = Path("trades_relabeled.csv")
 ENV_EXAMPLE = Path(".env.example")
@@ -219,7 +219,7 @@ def check_env_example_secrets() -> None:
 
 
 def check_archive() -> None:
-    print("\n[5] Frozen archive invariant")
+    print("\n[5] Frozen archive invariant (advisory)")
     record("Frozen archive exists", ARCHIVE_PATH.exists(), f"Missing: {ARCHIVE_PATH}")
 
 
@@ -249,8 +249,8 @@ def check_whitelist() -> None:
         return
 
     record(
-        "Schema version == 2.0",
-        data.get("schema_version") == "2.0",
+        "Schema version == 1.0",
+        data.get("schema_version") == "1.0",
         f"Got: {data.get('schema_version')!r}",
     )
 
