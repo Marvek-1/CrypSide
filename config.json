@@ -12,6 +12,8 @@
         "pair_whitelist": ["BTC/USDT", "ETH/USDT", "SOL/USDT"],
         "pair_blacklist": []
     },
+    "stake_currency": "USDT",
+    "stake_amount": 20,
     "edge": {
         "enabled": false,
         "process_throttle_secs": 3600,

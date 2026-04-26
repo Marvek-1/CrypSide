@@ -44,6 +44,9 @@ class IdimIkangStrategy(IStrategy):
     use_hour_gate = False
     can_short = True
 
+    # Builder: require_pwin flag for RR-only vs production/live
+    require_pwin = True  # Set to False for RR-only backtest, True for production/live
+
     whitelist_gate = WhitelistGate(str(Path(__file__).parent / "whitelist.json"))
 
     def populate_indicators(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
@@ -115,24 +118,44 @@ class IdimIkangStrategy(IStrategy):
 
     def populate_entry_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
         # Vectorized regime, pwin, RR, hour, whitelist gates
-        long_mask = (
-            (dataframe['ema20'] > dataframe['ema50']) &
-            (dataframe['close'] > dataframe['ema20']) &
-            (dataframe['rsi14'] >= 30) & (dataframe['rsi14'] <= 65) &
-            (dataframe['macd_hist'] > 0) &
-            (dataframe['pwin'] >= 0.65) &
-            (dataframe['rr'] >= 1.5) &
-            (~dataframe['regime'].isin(['RANGING', 'DOWNTREND', 'STRONG_DOWNTREND']))
-        )
-        short_mask = (
-            (dataframe['ema20'] < dataframe['ema50']) &
-            (dataframe['close'] < dataframe['ema20']) &
-            (dataframe['rsi14'] >= 35) & (dataframe['rsi14'] <= 70) &
-            (dataframe['macd_hist'] < 0) &
-            (dataframe['pwin'] >= 0.65) &
-            (dataframe['rr'] >= 1.5) &
-            (~dataframe['regime'].isin(['RANGING', 'UPTREND', 'STRONG_UPTREND']))
-        )
+        if self.require_pwin:
+            # Production/live: pwin must be real and >= 0.65
+            long_mask = (
+                (dataframe['ema20'] > dataframe['ema50']) &
+                (dataframe['close'] > dataframe['ema20']) &
+                (dataframe['rsi14'] >= 30) & (dataframe['rsi14'] <= 65) &
+                (dataframe['macd_hist'] > 0) &
+                (dataframe['pwin'] >= 0.65) &
+                (dataframe['rr'] >= 1.5) &
+                (~dataframe['regime'].isin(['RANGING', 'DOWNTREND', 'STRONG_DOWNTREND']))
+            )
+            short_mask = (
+                (dataframe['ema20'] < dataframe['ema50']) &
+                (dataframe['close'] < dataframe['ema20']) &
+                (dataframe['rsi14'] >= 35) & (dataframe['rsi14'] <= 70) &
+                (dataframe['macd_hist'] < 0) &
+                (dataframe['pwin'] >= 0.65) &
+                (dataframe['rr'] >= 1.5) &
+                (~dataframe['regime'].isin(['RANGING', 'UPTREND', 'STRONG_UPTREND']))
+            )
+        else:
+            # RR-only test: ignore pwin (allow all pwin values)
+            long_mask = (
+                (dataframe['ema20'] > dataframe['ema50']) &
+                (dataframe['close'] > dataframe['ema20']) &
+                (dataframe['rsi14'] >= 30) & (dataframe['rsi14'] <= 65) &
+                (dataframe['macd_hist'] > 0) &
+                (dataframe['rr'] >= 1.5) &
+                (~dataframe['regime'].isin(['RANGING', 'DOWNTREND', 'STRONG_DOWNTREND']))
+            )
+            short_mask = (
+                (dataframe['ema20'] < dataframe['ema50']) &
+                (dataframe['close'] < dataframe['ema20']) &
+                (dataframe['rsi14'] >= 35) & (dataframe['rsi14'] <= 70) &
+                (dataframe['macd_hist'] < 0) &
+                (dataframe['rr'] >= 1.5) &
+                (~dataframe['regime'].isin(['RANGING', 'UPTREND', 'STRONG_UPTREND']))
+            )
         # Hour gate (if enabled)
         if self.use_hour_gate:
             long_mask &= (dataframe['hour_utc'] == 21)
