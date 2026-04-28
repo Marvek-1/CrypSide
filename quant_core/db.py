@@ -1,8 +1,16 @@
-import asyncpg
-import os
-from datetime import datetime, timezone
+import asyncio
 import json
+import os
+import sys
+import uuid
+from datetime import datetime, timezone
+
+import asyncpg
 from config import DATABASE_URL
+from observer_bundle.config import CURRENT_POLICY_VERSION as POLICY_VERSION
+
+sys.path.insert(0, "/home/idona/MoStar/MoStar-Grid")
+
 
 async def get_pool():
     if DATABASE_URL:
@@ -22,6 +30,7 @@ async def get_pool():
         port=db_port,
     )
 
+
 async def append_log(pool, event_type: str, message: str):
     """Append-only logging to system_logs. No updates, no deletes."""
     async with pool.acquire() as conn:
@@ -33,8 +42,14 @@ async def append_log(pool, event_type: str, message: str):
             "INFO",
             "quant_core",
             event_type,
-            json.dumps({"message": message, "timestamp": datetime.now(timezone.utc).isoformat()}),
+            json.dumps(
+                {
+                    "message": message,
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                }
+            ),
         )
+
 
 async def append_signal(pool, signal_data: dict):
     """
@@ -47,7 +62,11 @@ async def append_signal(pool, signal_data: dict):
         if f not in signal_data or signal_data[f] is None:
             raise ValueError(f"Signal rejected: Missing required field '{f}'")
 
-    ts_value = signal_data.get("ts") or signal_data.get("timestamp") or datetime.now(timezone.utc)
+    ts_value = (
+        signal_data.get("ts")
+        or signal_data.get("timestamp")
+        or datetime.now(timezone.utc)
+    )
 
     side_value = signal_data.get("side") or signal_data.get("direction")
     if not side_value:
@@ -58,7 +77,9 @@ async def append_signal(pool, signal_data: dict):
         entry_range = signal_data.get("entry_range") or {}
         entry_value = entry_range.get("min")
     if entry_value is None:
-        raise ValueError("Signal rejected: Missing required field 'entry' or 'entry_range.min'")
+        raise ValueError(
+            "Signal rejected: Missing required field 'entry' or 'entry_range.min'"
+        )
 
     tp_value = signal_data.get("take_profit")
     if isinstance(tp_value, list):
@@ -78,14 +99,23 @@ async def append_signal(pool, signal_data: dict):
     regime_value = signal_data.get("regime", "UNKNOWN")
     source_value = signal_data.get("source", "quant_core")
 
+    if not POLICY_VERSION:
+        raise ValueError(
+            "policy_version is required — refusing to insert signal without identity"
+        )
+
+    regime_version_value = signal_data.get("regime_version", "v2_adx_ema_rsi")
+    signal_id = signal_data.get("signal_id", str(uuid.uuid4()))
+
     async with pool.acquire() as conn:
         await conn.execute(
             """
             INSERT INTO signals (
-                pair, ts, side, entry, stop_loss, take_profit,
-                score, regime, reason_trace, logic_version, config_version, source
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10, $11, $12)
+                signal_id, pair, ts, side, entry, stop_loss, take_profit,
+                score, regime, reason_trace, logic_version, config_version, source, policy_version, regime_version
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb, $11, $12, $13, $14, $15)
             """,
+            signal_id,
             signal_data["pair"],
             ts_value,
             str(side_value).upper(),
@@ -98,4 +128,74 @@ async def append_signal(pool, signal_data: dict):
             signal_data["logic_version"],
             signal_data["config_version"],
             str(source_value),
+            POLICY_VERSION,
+            str(regime_version_value),
         )
+
+    async def _trigger_semantic_review(signal_data: dict):
+        from core.grid_orchestrator.core_engine.moscript_engine import MoScriptEngine
+
+        engine = MoScriptEngine()
+        result = await engine.execute_ritual(
+            "SIGNAL_CERTIFY",
+            {
+                "signal_id": signal_id,
+                "regime_version": signal_data.get("regime_version", "v2_adx_ema_rsi"),
+                "score": float(signal_data.get("score", 0)),
+                "execution_grade": signal_data.get("execution_grade", False),
+                "expires_at": signal_data.get("expires_at"),
+                "asset": signal_data.get("pair"),
+                "risk_class": signal_data.get("risk_class", "medium"),
+            },
+        )
+
+        # Persist to semantic_reviews table
+        async with pool.acquire() as conn:
+            await conn.execute(
+                """
+                INSERT INTO semantic_reviews (
+                    signal_id, intent_id, status, reason, mo_lingua_packet,
+                    regime_version, score, risk_class, execution_mode, live_execution
+                ) VALUES ($1, NULL, $2, $3, $4, $5, $6, $7, $8, $9)
+                """,
+                signal_id,
+                result.get("status"),
+                result.get("reason"),
+                result.get("mo_lingua_packet"),
+                signal_data.get("regime_version", "v2_adx_ema_rsi"),
+                float(signal_data.get("score", 0)),
+                signal_data.get("risk_class", "medium"),
+                result.get("execution_mode"),
+                result.get("live_execution", False),
+            )
+
+        # If approved, persist to execution_intents table
+        if result.get("status") == "APPROVED_FOR_PAPER":
+            async with pool.acquire() as conn:
+                await conn.execute(
+                    """
+                    INSERT INTO execution_intents (
+                        signal_id, asset, side, entry, stop_loss, take_profit,
+                        status, execution_mode, live_execution, requires_manual,
+                        mo_lingua_packet, risk_class, max_risk_pct
+                    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+                    """,
+                    signal_id,
+                    signal_data.get("pair"),
+                    str(side_value).upper(),
+                    float(entry_value),
+                    float(signal_data["stop_loss"]),
+                    [float(tp_value)] if tp_value else [],
+                    "APPROVED_FOR_PAPER",
+                    "paper",
+                    False,
+                    True,
+                    result.get("mo_lingua_packet"),
+                    signal_data.get("risk_class", "medium"),
+                    0.5,
+                )
+
+    try:
+        asyncio.create_task(_trigger_semantic_review(signal_data))
+    except RuntimeError:
+        asyncio.run(_trigger_semantic_review(signal_data))

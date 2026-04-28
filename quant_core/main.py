@@ -1,18 +1,26 @@
-from fastapi import FastAPI, HTTPException, BackgroundTasks
 import asyncio
 import json
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-from config import PAIRS
-from db import get_pool, append_log, append_signal
 from binance_client import fetch_historical_klines
+from config import PAIRS
+from db import append_log, append_signal, get_pool
+from fastapi import BackgroundTasks, FastAPI, HTTPException
 from indicators import apply_all_indicators
-from regime import classify_regime
+
+GRID_ROOT = Path(__file__).resolve().parents[2] / "MoStar-Grid"
+if str(GRID_ROOT) not in sys.path:
+    sys.path.append(str(GRID_ROOT))
+
+from core.market_intelligence.regime_v2_adx_ema_rsi import classify_regime
 from scoring import generate_signals
 from telegram_bot import send_alert
 
-app = FastAPI(title="Idim Ikang v1.1", description="Lawful Observer - Capital Extraction Engine")
+app = FastAPI(
+    title="Idim Ikang v1.1", description="Lawful Observer - Capital Extraction Engine"
+)
 
 # KILL SWITCH (EXPLICIT)
 KILL_SWITCH_ACTIVE = False
@@ -23,6 +31,7 @@ _last_signal_bars = {}
 _bar_counters = {}
 _daily_signal_counts = {}
 
+
 @app.on_event("startup")
 async def startup():
     global DB_POOL
@@ -31,6 +40,7 @@ async def startup():
         await append_log(DB_POOL, "SYSTEM_STARTUP", "Idim Ikang v1.1 initialized.")
     except Exception as e:
         print(f"Database connection failed: {e}")
+
 
 @app.post("/kill")
 async def kill_switch():
@@ -42,8 +52,11 @@ async def kill_switch():
     global KILL_SWITCH_ACTIVE
     KILL_SWITCH_ACTIVE = True
     if DB_POOL:
-        await append_log(DB_POOL, "KILL_SWITCH", "Kill switch activated. Halting all operations.")
+        await append_log(
+            DB_POOL, "KILL_SWITCH", "Kill switch activated. Halting all operations."
+        )
     return {"status": "halted", "timestamp": datetime.now(timezone.utc).isoformat()}
+
 
 @app.post("/start")
 async def start_scanning(background_tasks: BackgroundTasks):
@@ -56,6 +69,7 @@ async def start_scanning(background_tasks: BackgroundTasks):
     if DB_POOL:
         await append_log(DB_POOL, "SCANNER_START", "Scanning loop started manually.")
     return {"status": "started"}
+
 
 async def scanning_loop():
     global KILL_SWITCH_ACTIVE, _last_signal_bars, _bar_counters, _daily_signal_counts
@@ -84,13 +98,24 @@ async def scanning_loop():
                 current_bar = _bar_counters[bar_key]
 
                 # 3. Generate Signals
-                signals = generate_signals(pair, df_15m, regime, _last_signal_bars, current_bar, _daily_signal_counts)
+                signals = generate_signals(
+                    pair,
+                    df_15m,
+                    regime,
+                    _last_signal_bars,
+                    current_bar,
+                    _daily_signal_counts,
+                )
 
                 for signal in signals:
                     # 4. Log and Alert (No log -> No signal)
                     if DB_POOL:
                         await append_signal(DB_POOL, signal)
-                        await append_log(DB_POOL, "SIGNAL_GENERATED", f"Signal generated for {pair} ({signal['direction']})")
+                        await append_log(
+                            DB_POOL,
+                            "SIGNAL_GENERATED",
+                            f"Signal generated for {pair} ({signal['direction']})",
+                        )
 
                     alert_msg = (
                         f"🚨 <b>{signal['direction']} SIGNAL: {pair}</b>\n"
@@ -110,12 +135,15 @@ async def scanning_loop():
                 await append_log(DB_POOL, "ERROR", f"Scanning loop error: {str(e)}")
             await asyncio.sleep(60)
 
+
 @app.get("/phase2")
 async def phase2_output():
     """
     PHASE 2 OUTPUT (MANDATORY STRUCTURE)
     """
-    canonical_results_path = Path(__file__).resolve().parent.parent / "PHASE2_RESULTS.json"
+    canonical_results_path = (
+        Path(__file__).resolve().parent.parent / "PHASE2_RESULTS.json"
+    )
     if canonical_results_path.exists():
         try:
             with canonical_results_path.open("r", encoding="utf-8") as phase2_file:
@@ -123,7 +151,10 @@ async def phase2_output():
         except Exception:
             pass
     return {
-        "run_metadata": {"version": "v1.1-tuned", "status": "active" if not KILL_SWITCH_ACTIVE else "halted"},
+        "run_metadata": {
+            "version": "v1.1-tuned",
+            "status": "active" if not KILL_SWITCH_ACTIVE else "halted",
+        },
         "data_integrity": {"open_candles_rejected": True, "pagination_enforced": True},
         "signal_frequency": {},
         "regime_analysis": {},
@@ -135,5 +166,8 @@ async def phase2_output():
         "sensitivity_analysis": {},
         "latency_simulation": {},
         "dead_zone_analysis": {},
-        "overall_verdict": {"status": "compliant", "message": "Lawful Observer operational."}
+        "overall_verdict": {
+            "status": "compliant",
+            "message": "Lawful Observer operational.",
+        },
     }

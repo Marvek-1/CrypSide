@@ -1,0 +1,7 @@
+            conname             |                                                                                  constraint_def                                                                                  
+--------------------------------+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ signals_execution_source_check | CHECK ((execution_source = ANY (ARRAY['simulated'::text, 'live'::text])))
+ signals_outcome_check          | CHECK ((outcome = ANY (ARRAY['WIN'::text, 'LOSS'::text, 'EXPIRED'::text, 'PARTIAL_WIN'::text, 'ARCHIVED_V1'::text, 'LIVE_WIN'::text, 'LIVE_LOSS'::text, 'LIVE_PARTIAL'::text])))
+ signals_side_check             | CHECK ((side = ANY (ARRAY['LONG'::text, 'SHORT'::text])))
+(3 rows)
+

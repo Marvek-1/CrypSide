@@ -1,0 +1,38 @@
+# =========================================================================
+# CrypSide Champion Profile — L50_S60_MF15_EXmedium_RGadaptive
+# Validated: 5 seeds × 2,000 trades (10,000 simulated trades)
+# Stress test: rank #1 in 5/5 seeds, all gates passed in 5/5 seeds
+# Expected: WR 60.2% ± 0.5, PF 2.08 ± 0.04, EV +0.39R ± 0.01
+# =========================================================================
+profile:
+  name: L50_S60_MF15_EXmedium_RGadaptive
+  version: 1.0.0
+  deployed_at: 2026-04-27T12:50:42.554Z
+  supersedes: current_live_strict_high
+
+# --- Signal gates ---
+thresholds:
+  prob_floor_long: 50          # min score to emit a long (was 52)
+  prob_floor_short: 60         # min score to emit a short (was 58) — TIGHTEN shorts
+  moedge_trash_filter: 15      # drop signals with MoEdge score < 15
+
+# --- Behaviour knobs ---
+behaviour:
+  exhaustion_strictness: medium   # was 'high' — stop over-killing candidates
+  btc_regime_mode: adaptive       # was 'strict' — CRITICAL UNLOCK
+
+# --- Safety gates (rollback if breached live) ---
+guardrails:
+  win_rate_band: [55, 62]
+  profit_factor_min: 1.25
+  expected_r_min: 0.15
+  top_killer_pct_max: 45
+  signals_per_day_min: 6
+  max_drawdown_r_abort: 25   # 2x stress-test worst case
+
+# --- Drift bands (90% CI from stress test) ---
+drift_bands:
+  win_rate:       { mean: 60.24,       low: 59.50, high: 60.98 }
+  profit_factor:  { mean: 2.082,  low: 2.028, high: 2.136 }
+  expected_r:     { mean: 0.393,     low: 0.381, high: 0.405 }
+  signals_per_day:{ mean: 6.5,low: 5.86, high: 7.14 }

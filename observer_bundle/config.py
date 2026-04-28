@@ -17,6 +17,14 @@ def _parse_utc(ts_value: str) -> datetime:
         return datetime.max.replace(tzinfo=timezone.utc)
 
 
+def _env_float_alias(primary: str, alias: str, default: str) -> float:
+    return float(os.environ.get(primary, os.environ.get(alias, default)))
+
+
+def _env_str_alias(primary: str, alias: str, default: str) -> str:
+    return os.environ.get(primary, os.environ.get(alias, default))
+
+
 TEMP_DATA_BURST_ENABLED = _env_flag("TEMP_DATA_BURST_ENABLED", "true")
 TEMP_DATA_BURST_END_UTC = os.environ.get("TEMP_DATA_BURST_END_UTC", "2026-04-12T23:59:59Z")
 TEMP_DATA_BURST_ACTIVE = TEMP_DATA_BURST_ENABLED and datetime.now(timezone.utc) <= _parse_utc(TEMP_DATA_BURST_END_UTC)
@@ -100,6 +108,17 @@ MIN_UNCLASSIFIED_PROB_SCORE = float(os.environ.get("MIN_UNCLASSIFIED_PROB_SCORE"
 BREAKDOWN_THRESHOLD_UPLIFT = float(os.environ.get("BREAKDOWN_THRESHOLD_UPLIFT", "8.0"))
 DEGRADED_HOUR_THRESHOLD_UPLIFT = float(os.environ.get("DEGRADED_HOUR_THRESHOLD_UPLIFT", "5.0"))
 DEGRADED_HOURS_UTC = set(map(int, os.environ.get("DEGRADED_HOURS_UTC", "6,7").split(",")))
+
+# --- Stability / Smartness Controls ---
+BTC_REGIME_MODE = _env_str_alias("BTC_REGIME_MODE", "CRYPSIDE_BTC_REGIME_MODE", "adaptive").strip().lower()
+BTC_REGIME_ADX_STRONG = _env_float_alias("BTC_REGIME_ADX_STRONG", "CRYPSIDE_BTC_REGIME_ADX_STRONG", "26.0")
+BTC_REGIME_ADX_TREND = _env_float_alias("BTC_REGIME_ADX_TREND", "CRYPSIDE_BTC_REGIME_ADX_TREND", "18.0")
+BTC_REGIME_EMA_SPREAD_STRONG = _env_float_alias("BTC_REGIME_EMA_SPREAD_STRONG", "CRYPSIDE_BTC_REGIME_EMA_SPREAD_STRONG", "0.018")
+BTC_REGIME_EMA_SPREAD_TREND = _env_float_alias("BTC_REGIME_EMA_SPREAD_TREND", "CRYPSIDE_BTC_REGIME_EMA_SPREAD_TREND", "0.0075")
+BTC_REGIME_RETURN_STRONG = _env_float_alias("BTC_REGIME_RETURN_STRONG", "CRYPSIDE_BTC_REGIME_RETURN_STRONG", "0.08")
+BTC_REGIME_RETURN_TREND = _env_float_alias("BTC_REGIME_RETURN_TREND", "CRYPSIDE_BTC_REGIME_RETURN_TREND", "0.03")
+BTC_REGIME_FALLBACK = _env_str_alias("BTC_REGIME_FALLBACK", "CRYPSIDE_BTC_REGIME_FALLBACK", "RANGING").strip().upper()
+EXHAUSTION_STRICTNESS = _env_str_alias("EXHAUSTION_STRICTNESS", "CRYPSIDE_EXHAUSTION_STRICTNESS", "medium").strip().lower()
 
 # Scan profile selection: live strict vs sim loose
 if ENABLE_LIVE_TRADING:
@@ -187,17 +206,6 @@ MAX_COHERENCE_OFFSET = 15.0      # ±15 cap restored to boost Doctrine B through
 COHERENCE_RESCUE_FLOOR = 40.0    # Min raw score required to receive a coherence boost
 SIDE_SEPARATION_MARGIN = 5.0     # Min |long_adj - short_adj| to avoid noise flipping
 
-# --- Short-side structural constants ---
-SHORT_FAILED_BOUNCE_RECLAIM_ATR_MAX = 1.25
-SHORT_BREAKDOWN_STRETCH_MAX = 3.00
-SHORT_MEAN_REVERSION_VWAP_EXT_PCT = 0.02
-
-# --- Soft penalties (bounded, additive, auditable) ---
-FAILED_BOUNCE_UPTREND_PENALTY = 6.0
-FAILED_BOUNCE_BTC_UPTREND_PENALTY = 6.0
-GENERIC_SHORT_BTC_UPTREND_PENALTY = 10.0
-GENERIC_SHORT_UPTREND_BLOCK = True   
-
 # --- Coherence weighting at ranking layer ---
 Q_SIDE_BIAS_MAX = 0.15   # bounded 15% ranking bias
 # Profile-specific coherence gating
@@ -206,8 +214,8 @@ Q_SIDE_BIAS_MAX = 0.15   # bounded 15% ranking bias
 # Sim profiles: soft penalties, coherence enabled.
 if ENABLE_LIVE_TRADING:
     COHERENCE_ENABLED = False        # No side-balance offsets in live until proven
-    SOFT_REGIME_GATE = False         # Local regime contradiction = hard block
-    SOFT_BTC_GATE = False            # BTC macro contradiction = hard block
+    SOFT_REGIME_GATE = BTC_REGIME_MODE == "adaptive"
+    SOFT_BTC_GATE = BTC_REGIME_MODE == "adaptive"
 else:
     COHERENCE_ENABLED = True         # Side-balance offsets active in sim
     SOFT_REGIME_GATE = True          # Local regime contradiction = -12 penalty
@@ -222,9 +230,26 @@ PROBABILITY_PRIMARY_WEIGHT     = 0.75   # Weight for probability score in blend
 LEGACY_SHADOW_WEIGHT           = 0.25   # Weight for legacy heuristic score in blend
 
 # Minimum probability-score floors (0-100 scale, 50 = breakeven sigmoid)
-MIN_LONG_PROB_SCORE            = 52.0   # Longs need at least p=0.52 estimated win
-MIN_SHORT_PROB_SCORE           = 52.0   # Shorts need at least p=0.52 estimated win
+MIN_LONG_PROB_SCORE            = _env_float_alias("MIN_LONG_PROB_SCORE", "CRYPSIDE_PROB_FLOOR_LONG", "52.0")
+MIN_SHORT_PROB_SCORE           = _env_float_alias("MIN_SHORT_PROB_SCORE", "CRYPSIDE_PROB_FLOOR_SHORT", "52.0")
 MIN_FAILED_BOUNCE_SHORT_PROB_SCORE = 55.0  # Counter-trend shorts need higher floor
+
+# --- Short-side structural constants ---
+SHORT_FAILED_BOUNCE_RECLAIM_ATR_MAX = 1.25
+SHORT_BREAKDOWN_STRETCH_MAX = 3.00
+SHORT_MEAN_REVERSION_VWAP_EXT_PCT = 0.02
+
+if EXHAUSTION_STRICTNESS == "low":
+    ATR_STRETCH_MAX = max(float(ATR_STRETCH_MAX), 2.3)
+    SHORT_BREAKDOWN_STRETCH_MAX = max(float(SHORT_BREAKDOWN_STRETCH_MAX), 4.0)
+elif EXHAUSTION_STRICTNESS == "medium":
+    ATR_STRETCH_MAX = max(float(ATR_STRETCH_MAX), 1.9)
+    SHORT_BREAKDOWN_STRETCH_MAX = max(float(SHORT_BREAKDOWN_STRETCH_MAX), 3.5)
+
+# --- Soft penalties (bounded, additive, auditable) ---
+FAILED_BOUNCE_UPTREND_PENALTY = 6.0
+FAILED_BOUNCE_BTC_UPTREND_PENALTY = 6.0
+GENERIC_SHORT_BTC_UPTREND_PENALTY = 10.0
 
 # --- Sprint D: Regime Priors (Sovereign Nudge in z-space) ---
 LONG_UPTREND_Z_PRIOR           = float(os.environ.get("LONG_UPTREND_Z_PRIOR", "0.35"))

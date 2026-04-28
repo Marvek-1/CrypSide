@@ -1,0 +1,73 @@
+{
+  "profile": {
+    "name": "L50_S60_MF15_EXmedium_RGadaptive",
+    "version": "1.0.0",
+    "deployed_at": "2026-04-27T12:50:42.554Z",
+    "supersedes": "current_live_strict_high"
+  },
+  "thresholds": {
+    "prob_floor_long": 50,
+    "prob_floor_short": 60,
+    "moedge_trash_filter": 15
+  },
+  "behaviour": {
+    "exhaustion_strictness": "medium",
+    "btc_regime_mode": "adaptive"
+  },
+  "guardrails": {
+    "win_rate_band": [
+      55,
+      62
+    ],
+    "profit_factor_min": 1.25,
+    "expected_r_min": 0.15,
+    "top_killer_pct_max": 45,
+    "signals_per_day_min": 6,
+    "max_drawdown_r_abort": 25
+  },
+  "drift_bands": {
+    "win_rate": {
+      "mean": 60.24,
+      "sd": 0.447,
+      "min": 59.6,
+      "max": 61
+    },
+    "profit_factor": {
+      "mean": 2.082,
+      "sd": 0.033,
+      "min": 2.03,
+      "max": 2.129
+    },
+    "expected_r": {
+      "mean": 0.393,
+      "sd": 0.007,
+      "min": 0.381,
+      "max": 0.402
+    },
+    "max_drawdown_r": {
+      "mean": 10.466,
+      "sd": 2.052,
+      "min": 7.79,
+      "max": 13.81
+    },
+    "signals_per_day": {
+      "mean": 6.5,
+      "sd": 0.39,
+      "min": 6.1,
+      "max": 7.2
+    },
+    "top_killer_pct": {
+      "mean": 37.462,
+      "sd": 0.981,
+      "min": 35.8,
+      "max": 38.83
+    }
+  },
+  "stress_test_evidence": {
+    "seeds_run": 5,
+    "trades_per_seed": 2000,
+    "gates_passed": "5/5",
+    "rank_1_frequency": "5/5",
+    "avg_champion_score": 0.8473
+  }
+}

@@ -9,6 +9,7 @@ import psycopg2
 import psycopg2.extras
 from dotenv import load_dotenv
 from fastapi import FastAPI, Query
+from quant_core.confidence_gate import calculate_confidence_gate
 
 load_dotenv()
 
@@ -32,7 +33,7 @@ def scanner_state() -> str:
             check=True,
             capture_output=True,
             text=True,
-            env={**os.environ, "PM2_HOME": "/home/idona/.pm2"}
+            env={**os.environ, "PM2_HOME": "/home/idona/.pm2"},
         )
         processes = json.loads(result.stdout)
         for proc in processes:
@@ -45,11 +46,18 @@ def scanner_state() -> str:
 
 @app.get("/status")
 def status():
-    with db_conn() as conn, conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-        cur.execute("SELECT ts, pair, side, score, regime FROM signals ORDER BY ts DESC LIMIT 1")
+    with (
+        db_conn() as conn,
+        conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur,
+    ):
+        cur.execute(
+            "SELECT ts, pair, side, score, regime FROM signals ORDER BY ts DESC LIMIT 1"
+        )
         last_signal = cur.fetchone()
 
-        cur.execute("SELECT ts, level, event, details FROM system_logs ORDER BY ts DESC LIMIT 1")
+        cur.execute(
+            "SELECT ts, level, event, details FROM system_logs ORDER BY ts DESC LIMIT 1"
+        )
         last_log = cur.fetchone()
     return {
         "service": "crypside-api",
@@ -65,7 +73,10 @@ def status():
 
 @app.get("/signals")
 def signals(limit: int = Query(50, ge=1, le=500)):
-    with db_conn() as conn, conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+    with (
+        db_conn() as conn,
+        conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur,
+    ):
         cur.execute(
             """
             SELECT signal_id, pair, ts, side, entry, stop_loss, take_profit, score, regime,
@@ -82,7 +93,10 @@ def signals(limit: int = Query(50, ge=1, le=500)):
 
 @app.get("/stats")
 def stats():
-    with db_conn() as conn, conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+    with (
+        db_conn() as conn,
+        conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur,
+    ):
         cur.execute(
             """
             SELECT
@@ -111,7 +125,11 @@ def stats():
 
     gross_win_r = float(row.get("gross_win_r") or 0.0)
     gross_loss_r = float(row.get("gross_loss_r") or 0.0)
-    profit_factor = (gross_win_r / gross_loss_r) if gross_loss_r > 0 else (999.0 if gross_win_r > 0 else 0.0)
+    profit_factor = (
+        (gross_win_r / gross_loss_r)
+        if gross_loss_r > 0
+        else (999.0 if gross_win_r > 0 else 0.0)
+    )
 
     first_ts = row.get("first_ts")
     last_ts = row.get("last_ts")
@@ -131,4 +149,84 @@ def stats():
         "signals_per_day": round(signals_per_day, 4),
         "logic_version": row.get("logic_version") or LOGIC_VERSION,
         "config_version": row.get("config_version") or CONFIG_VERSION,
+    }
+
+
+@app.get("/kill-analytics")
+def kill_analytics():
+    """Track CrypSide gate rejection statistics from training_candidates."""
+    with (
+        db_conn() as conn,
+        conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur,
+    ):
+        # Gate rejection counts
+        cur.execute(
+            """
+            SELECT
+                rejection_gate,
+                COUNT(*) AS killed_count,
+                COUNT(*) * 100.0 / SUM(COUNT(*)) OVER () AS kill_percentage
+            FROM training_candidates
+            WHERE rejection_gate IS NOT NULL
+            GROUP BY rejection_gate
+            ORDER BY killed_count DESC
+            """
+        )
+        gate_stats = cur.fetchall()
+
+        # Overall stats
+        cur.execute(
+            """
+            SELECT
+                COUNT(*) AS total_candidates,
+                COUNT(*) FILTER (WHERE rejection_gate IS NULL) AS passed_gates,
+                COUNT(*) FILTER (WHERE rejection_gate IS NOT NULL) AS killed_by_gates,
+                COUNT(*) FILTER (WHERE rejection_gate IS NOT NULL) * 100.0 / COUNT(*) AS overall_kill_rate
+            FROM training_candidates
+            WHERE ts > NOW() - INTERVAL '7 days'
+            """
+        )
+        overall = cur.fetchone()
+
+        # Top killer over 24h
+        cur.execute(
+            """
+            SELECT
+                rejection_gate,
+                COUNT(*) AS kill_count_24h
+            FROM training_candidates
+            WHERE rejection_gate IS NOT NULL
+              AND ts > NOW() - INTERVAL '24 hours'
+            GROUP BY rejection_gate
+            ORDER BY kill_count_24h DESC
+            LIMIT 1
+            """
+        )
+        top_killer_24h = cur.fetchone()
+
+    return {
+        "gate_stats": gate_stats,
+        "overall": overall,
+        "top_killer_24h": top_killer_24h,
+        "last_checked": time.time(),
+    }
+
+
+@app.get("/api/v1/confidence-gate")
+def get_confidence_gate():
+    """Returns the current confidence gate status and metrics."""
+    conn = db_conn()
+    gate = calculate_confidence_gate(conn)
+    conn.close()
+    return {
+        "gate_status": gate.status,
+        "signal_count": gate.signal_count,
+        "win_rate": gate.win_rate,
+        "profit_factor": gate.profit_factor,
+        "confidence": gate.confidence,
+        "signals_remaining": gate.signals_remaining,
+        "pf_gap": gate.pf_gap,
+        "verdict": gate.verdict,
+        "mo_lingua": gate.mo_lingua,
+        "qseal": gate.qseal,
     }

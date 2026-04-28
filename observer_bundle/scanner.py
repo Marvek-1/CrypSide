@@ -78,6 +78,14 @@ from microstructure_client import MicrostructureClient
 from execution_intelligence import compute_execution_features
 import g4_whitelist
 
+# MoEdge pre-filter integration
+try:
+    from moedge import MoEdgeEngine, EdgeConfig
+    MOEDGE_AVAILABLE = True
+except ImportError:
+    MOEDGE_AVAILABLE = False
+    logging.warning("MoEdge not installed - pre-filter disabled")
+
 # Global client to ensure session re-use for fast execution snapshotting
 _micro_client = MicrostructureClient()
 
@@ -652,14 +660,16 @@ def log_training_candidate(
                     squeeze_on, squeeze_fired, vol_ratio, funding_rate, ls_ratio, score,
                     family_indicators, trace_data,
                     directional_long_score, directional_short_score, directional_net,
-                    directional_margin, directional_primary_side
+                    directional_margin, directional_primary_side,
+                    moedge_score, moedge_regime, moedge_expected_r, moedge_stability, moedge_trade_dna
                 ) VALUES (
                     %s, %s, %s, %s, %s, %s::jsonb,
                     %s, %s,
                     %s, %s, %s, %s, %s, %s,
                     %s, %s, %s, %s, %s, %s,
                     %s::jsonb, %s::jsonb,
-                    %s, %s, %s, %s, %s
+                    %s, %s, %s, %s, %s,
+                    %s, %s, %s, %s, %s::jsonb
                 )
                 RETURNING id
                 """,
@@ -676,6 +686,11 @@ def log_training_candidate(
                     directional_net,
                     directional_margin,
                     directional_primary_side,
+                    alpha.get("moedge_score") if alpha else None,
+                    alpha.get("moedge_regime") if alpha else None,
+                    alpha.get("moedge_expected_r") if alpha else None,
+                    alpha.get("moedge_stability") if alpha else None,
+                    json.dumps(alpha.get("moedge_trade_dna", {}), cls=_NumpyEncoder) if alpha else '{}',
                 ),
             )
             row = cur.fetchone()
@@ -1110,6 +1125,30 @@ def classify_regime(df4h: pd.DataFrame) -> str:
     above = latest["close"] > latest["ema20"]
     below = latest["close"] < latest["ema20"]
 
+    if getattr(config, "BTC_REGIME_MODE", "adaptive") == "adaptive":
+        ema20_v = float(latest.get("ema20", 0.0) or 0.0)
+        ema50_v = float(latest.get("ema50", 0.0) or 0.0)
+        close_v = float(latest.get("close", 0.0) or 0.0)
+        ema_spread = abs(ema20_v - ema50_v) / close_v if close_v > 0 else 0.0
+        lookback_close = float(x["close"].iloc[-21]) if len(x) >= 21 else close_v
+        ret_20 = ((close_v / lookback_close) - 1.0) if lookback_close > 0 else 0.0
+
+        strong_adx = float(getattr(config, "BTC_REGIME_ADX_STRONG", 26.0))
+        trend_adx = float(getattr(config, "BTC_REGIME_ADX_TREND", 18.0))
+        strong_spread = float(getattr(config, "BTC_REGIME_EMA_SPREAD_STRONG", 0.018))
+        trend_spread = float(getattr(config, "BTC_REGIME_EMA_SPREAD_TREND", 0.0075))
+        strong_ret = float(getattr(config, "BTC_REGIME_RETURN_STRONG", 0.08))
+        trend_ret = float(getattr(config, "BTC_REGIME_RETURN_TREND", 0.03))
+
+        if up and above and (adx_v >= strong_adx or (ema_spread >= strong_spread and ret_20 >= strong_ret)) and rsi_v >= 52:
+            return "STRONG_UPTREND"
+        if dn and below and (adx_v >= strong_adx or (ema_spread >= strong_spread and ret_20 <= -strong_ret)) and rsi_v <= 48:
+            return "STRONG_DOWNTREND"
+        if up and (adx_v >= trend_adx or (ema_spread >= trend_spread and ret_20 >= trend_ret)):
+            return "UPTREND"
+        if dn and (adx_v >= trend_adx or (ema_spread >= trend_spread and ret_20 <= -trend_ret)):
+            return "DOWNTREND"
+
     if adx_v > 30 and up and above and rsi_v > 55:   return "STRONG_UPTREND"
     if adx_v > 30 and dn and below and rsi_v < 45:   return "STRONG_DOWNTREND"
     if adx_v > 20 and up:                             return "UPTREND"
@@ -1121,9 +1160,10 @@ def get_btc_macro_regime() -> str:
     try:
         return classify_regime(fetch_klines("BTCUSDT", "4h", LOOKBACK_4H))
     except Exception as e:
+        fallback_regime = str(getattr(config, "BTC_REGIME_FALLBACK", "RANGING")).upper()
         log_event("WARN", "scanner", "btc_fetch_failed", {"error": str(e)})
-        alert_system_error("btc_regime", "fetch_failed", str(e), {"fallback_regime": "RANGING"})
-        return "RANGING"
+        alert_system_error("btc_regime", "fetch_failed", str(e), {"fallback_regime": fallback_regime})
+        return fallback_regime
 
 def get_derivatives_alpha(conn, symbol: str) -> dict:
     """Fetches real-time institutional derivatives context from local PM2 collectors safely."""
@@ -1353,13 +1393,14 @@ def min_probability_floor(side: str, family_tag: str, regime: str, hour_utc: int
     """
     side = side.upper()
     fam  = (family_tag or "none").lower()
+    adaptive_mode = getattr(config, "BTC_REGIME_MODE", "adaptive") == "adaptive"
 
     # Ranging + breakdown short = always block (return >100)
-    if regime == "RANGING" and side == "SHORT" and fam == "breakdown":
+    if regime == "RANGING" and side == "SHORT" and fam == "breakdown" and not adaptive_mode:
         return 101.0
 
     # 1. Hard-block RANGING except for mean_reversion
-    if regime == "RANGING" and fam != "mean_reversion":
+    if regime == "RANGING" and fam != "mean_reversion" and not adaptive_mode:
         return 101.0  # Impossible to pass
 
     # 2. Base side floors
@@ -1380,6 +1421,9 @@ def min_probability_floor(side: str, family_tag: str, regime: str, hour_utc: int
     # 3b. Breakdown quarantine (+8.0 uplift)
     if fam == "breakdown":
         floor += float(getattr(config, "BREAKDOWN_THRESHOLD_UPLIFT", 8.0))
+
+    if regime == "RANGING" and adaptive_mode:
+        floor += 4.0 if fam == "mean_reversion" else 7.0
 
     # 3c. Degraded hour penalty (+5.0 uplift for UTC 6/7)
     degraded_hours = getattr(config, "DEGRADED_HOURS_UTC", {6, 7})
@@ -2193,6 +2237,12 @@ def insert_signal(conn, sig: dict) -> None:
         "z_score":      reason_trace.get("z_score"),
         "risk_scale":   reason_trace.get("risk_scale"),
         "rr_sl_mult":   reason_trace.get("rr_sl_mult"),
+        # MoEdge pre-filter fields
+        "moedge_score": sig.get("moedge_score"),
+        "moedge_regime": sig.get("moedge_regime"),
+        "moedge_expected_r": sig.get("moedge_expected_r"),
+        "moedge_stability": sig.get("moedge_stability"),
+        "moedge_trade_dna": json.dumps(sig.get("moedge_trade_dna", {}), cls=_NumpyEncoder),
         "rr_tp_mult":   reason_trace.get("rr_tp_mult"),
     }
 
@@ -2245,7 +2295,8 @@ def insert_signal(conn, sig: dict) -> None:
                 setup_score, execution_score, spread_bps, est_slippage_bps, execution_snapshot_ts,
                 policy_version, policy_activated_at,
                 signal_family, reason_trace, logic_version, config_version,
-                prob_score, legacy_score, pwin, z_score, score_mode, risk_scale, rr_sl_mult, rr_tp_mult
+                prob_score, legacy_score, pwin, z_score, score_mode, risk_scale, rr_sl_mult, rr_tp_mult,
+                moedge_score, moedge_regime, moedge_expected_r, moedge_stability, moedge_trade_dna
             ) VALUES (
                 %(signal_id)s, %(pair)s, %(ts)s, %(side)s, %(entry)s,
                 %(stop_loss)s, %(take_profit)s, %(score)s, %(regime)s,
@@ -2254,7 +2305,8 @@ def insert_signal(conn, sig: dict) -> None:
                 %(setup_score)s, %(execution_score)s, %(spread_bps)s, %(est_slippage_bps)s, %(execution_snapshot_ts)s,
                 %(policy_version)s, %(policy_activated_at)s,
                 %(signal_family)s, %(reason_trace)s::jsonb, %(logic_version)s, %(config_version)s,
-                %(prob_score)s, %(legacy_score)s, %(pwin)s, %(z_score)s, %(score_mode)s, %(risk_scale)s, %(rr_sl_mult)s, %(rr_tp_mult)s
+                %(prob_score)s, %(legacy_score)s, %(pwin)s, %(z_score)s, %(score_mode)s, %(risk_scale)s, %(rr_sl_mult)s, %(rr_tp_mult)s,
+                %(moedge_score)s, %(moedge_regime)s, %(moedge_expected_r)s, %(moedge_stability)s, %(moedge_trade_dna)s::jsonb
             ) ON CONFLICT (signal_id) DO NOTHING
             """,
             db_payload,
@@ -2503,7 +2555,7 @@ def analyze_pair(pair_idx_tuple: Tuple[str, int], btc_regime: str, btc_blocks_lo
         df15 = add_indicators(fetch_klines(pair, "15m", LOOKBACK_15M))
         df4  = fetch_klines(pair, "4h", LOOKBACK_4H)
         df1h = fetch_klines(pair, "1h", 100)
-        
+
         regime = classify_regime(df4)
         df1h["ema50"] = ema(df1h["close"], 50)
         _l1h = df1h.iloc[-1]
@@ -2512,6 +2564,57 @@ def analyze_pair(pair_idx_tuple: Tuple[str, int], btc_regime: str, btc_blocks_lo
         
         latest = df15.iloc[-1]
         prev_bar = df15.iloc[-2]
+
+        # ── MoEdge Pre-Filter (before CrypSide gates) ────────────────────────────────
+        moedge_result = None
+        moedge_skip_reason = None
+        if MOEDGE_AVAILABLE:
+            try:
+                # Convert df15 to OHLCV format for MoEdge [timestamp, open, high, low, close, volume]
+                ohlcv_rows = df15[["open_time", "open", "high", "low", "close", "volume"]].values.tolist()
+                moedge_engine = MoEdgeEngine(EdgeConfig())
+                moedge_result = moedge_engine.score_from_ohlcv(ohlcv_rows, symbol=pair)
+                
+                # Skip if MoEdge score below threshold (soft filter: only block extreme low quality)
+                if moedge_result.edge_score < 15.0:
+                    moedge_skip_reason = f"moedge_score_{moedge_result.edge_score:.2f}_below_15"
+                    training_records.append({
+                        "pair": pair,
+                        "side": "N/A",
+                        "score": 0.0,
+                        "regime": regime,
+                        "rejection_gate": moedge_skip_reason,
+                        "ts": df15.iloc[-1]["open_time"],
+                        "latest": latest,
+                        "trace": {
+                            "moedge_score": moedge_result.edge_score,
+                            "moedge_regime": moedge_result.regime,
+                            "moedge_signal": moedge_result.signal,
+                        },
+                        # Add required fields for training logging
+                        "signal_family": "none",
+                        "family_indicators": {},
+                        "btc_regime": btc_regime,
+                        "would_have_passed_live": False,
+                        "directional_long_score": None,
+                        "directional_short_score": None,
+                        "directional_net": None,
+                        "directional_margin": None,
+                        "directional_primary_side": None,
+                        # MoEdge pre-filter fields
+                        "moedge_score": float(moedge_result.edge_score),
+                        "moedge_regime": moedge_result.regime,
+                        "moedge_expected_r": moedge_result.expected_R,
+                        "moedge_stability": moedge_result.stability_factor,
+                        "moedge_trade_dna": moedge_result.trade_dna,
+                    })
+                    logger.info(f"[MOEDGE PREFILTER] {pair} skipped: score={moedge_result.edge_score:.2f} < 15 (extreme low quality)")
+                    return _result_payload(records=training_records)
+                
+                logger.info(f"[MOEDGE PREFILTER] {pair} passed: score={moedge_result.edge_score:.2f} regime={moedge_result.regime}")
+            except Exception as e:
+                logging.warning(f"[MOEDGE PREFILTER] {pair} scoring failed: {e}, continuing without filter")
+                moedge_result = None
 
         # ── Sprint D: Probability-Primary Scoring ──────────────────────────────
         # Step 1: Legacy template scores (kept as shadow comparison baseline)
@@ -2794,6 +2897,12 @@ def analyze_pair(pair_idx_tuple: Tuple[str, int], btc_regime: str, btc_blocks_lo
                 "directional_net": directional["directional_net"],
                 "directional_margin": directional["directional_margin"],
                 "directional_primary_side": directional["directional_primary_side"],
+                # MoEdge pre-filter fields
+                "moedge_score": float(moedge_result.edge_score) if moedge_result else None,
+                "moedge_regime": moedge_result.regime if moedge_result else None,
+                "moedge_expected_r": moedge_result.expected_R if moedge_result else None,
+                "moedge_stability": moedge_result.stability_factor if moedge_result else None,
+                "moedge_trade_dna": moedge_result.trade_dna if moedge_result else {},
             }
             
             # Initialize vwap_delta early to avoid scope issues
@@ -2897,6 +3006,12 @@ def analyze_pair(pair_idx_tuple: Tuple[str, int], btc_regime: str, btc_blocks_lo
                         "prob_score":   float(trace.get("prob_score", score)),
                         "legacy_score": float(trace.get("legacy_score", score)),
                         "score_mode":   str(trace.get("score_mode", "legacy_only")),
+                        # MoEdge pre-filter fields
+                        "moedge_score": float(moedge_result.edge_score) if moedge_result else None,
+                        "moedge_regime": moedge_result.regime if moedge_result else None,
+                        "moedge_expected_r": moedge_result.expected_R if moedge_result else None,
+                        "moedge_stability": moedge_result.stability_factor if moedge_result else None,
+                        "moedge_trade_dna": moedge_result.trade_dna if moedge_result else {},
                     }
 
             else:
@@ -2982,7 +3097,7 @@ def scan_once() -> None:
                         rejection_gate=tr["rejection_gate"],
                         would_have_passed_live=tr["would_have_passed_live"],
                         signal_family=tr["signal_family"],
-                        alpha=None,  # Will be fetched below for passes
+                        alpha=tr,  # Pass training record to include moedge fields
                         scan_profile=tr.get("scan_profile", "default"),
                         feature_version=tr.get("feature_version", "v1.0"),
                         family_indicators=tr.get("family_indicators", {}),
@@ -3389,6 +3504,7 @@ def main() -> None:
             if time.time() - _LAST_UNIVERSE_REFRESH > UNIVERSE_REFRESH_INTERVAL:
                 refresh_active_universe()
             scan_once()
+                
         except Exception as e:
             logger.error(f"Main loop escape: {e}")
         time.sleep(SCAN_INTERVAL_SECONDS)
