@@ -88,11 +88,16 @@ except ImportError:
 
 # Paper resolver integration
 try:
+    # scanner.py runs from observer_bundle/ — CrypSide root (one level up)
+    # must be in sys.path for quant_core to be importable.
+    _CRYPSIDE_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    if _CRYPSIDE_ROOT not in sys.path:
+        sys.path.insert(0, _CRYPSIDE_ROOT)
     from quant_core.paper_resolver import resolve_paper_orders
     PAPER_RESOLVER_AVAILABLE = True
-except ImportError:
+except ImportError as _e:
     PAPER_RESOLVER_AVAILABLE = False
-    logging.warning("Paper resolver not installed - outcome resolution disabled")
+    logging.warning(f"Paper resolver not available — outcome resolution disabled: {_e}")
 
 # Global client to ensure session re-use for fast execution snapshotting
 _micro_client = MicrostructureClient()
@@ -2005,7 +2010,17 @@ def passes_wolfram_five_cell_filter(regime: str, score: float, side: str = "") -
     score_bucket = (int(score) // 5) * 5
     if regime == "STRONG_UPTREND" and side.upper() == "SHORT": return False
     if regime == "STRONG_DOWNTREND" and side.upper() == "LONG": return False
-    if BLOCK_STRONG_UPTREND and regime == "STRONG_UPTREND": return False
+    
+    live_mode = getattr(config, "ENABLE_LIVE_TRADING", False)
+    
+    if live_mode and BLOCK_STRONG_UPTREND and regime == "STRONG_UPTREND":
+        return False
+    
+    if (not live_mode) and BLOCK_STRONG_UPTREND and regime == "STRONG_UPTREND":
+        logging.info(
+            "[WOLFRAM_STRONG_UPTREND_BYPASS] paper/sim mode — "
+            "strong uptrend block skipped for learning"
+        )
     
     # Simulation mode: permissive buckets for data collection
     if not config.ENABLE_LIVE_TRADING:
@@ -2027,7 +2042,26 @@ def passes_wolfram_five_cell_filter(regime: str, score: float, side: str = "") -
             ("RANGING",          50), ("RANGING",          55), ("RANGING",          60),
             ("RANGING",          65),
         }
-        return (regime, score_bucket) in allowed_sim
+        # Paper/sim mode: first allow validated simulation buckets.
+        if (regime, score_bucket) in allowed_sim:
+            return True
+        
+        # Paper exploration lane:
+        # Let high-score candidates through for observation only.
+        # They must be tagged downstream as research/exploratory and must NOT count
+        # toward Confidence Gate unless later explicitly promoted.
+        if score_bucket in {70, 75, 80, 85, 90, 95, 100, 105, 110}:
+            logging.info(
+                "[WOLFRAM_PAPER_EXPLORE] regime=%s side=%s score=%.2f bucket=%s "
+                "allowed_for_paper_research_only",
+                regime,
+                side,
+                score,
+                score_bucket,
+            )
+            return True
+        
+        return False
     
     # Live mode: use the currently configured cohort cells.
     # Doctrine v2.0: Normalized thresholds (Standard baseline 55, UPTREND/DOWNTREND 50)
@@ -3247,12 +3281,26 @@ def scan_once() -> None:
                 # Preserve raw score before execution multiplier.
                 candidate["raw_score"] = float(candidate["score"])
 
-                # NEW: regime/time execution control (Phase 2 only)
-                blocked, exec_mult, exec_gate = _execution_regime_time_adjustment(
-                    candidate["regime"],
-                    candidate["side"],
-                    candidate["latest"],
-                )
+                # Regime/time execution control — live execution only.
+                # Dead hours, RANGING blocks, regime-side multipliers are live
+                # slippage/risk constraints. Paper/sim mode bypasses them so
+                # candidates can reach insert_signal and feed the Confidence Gate.
+                if getattr(config, "ENABLE_LIVE_TRADING", False):
+                    blocked, exec_mult, exec_gate = _execution_regime_time_adjustment(
+                        candidate["regime"],
+                        candidate["side"],
+                        candidate["latest"],
+                    )
+                else:
+                    blocked, exec_mult, exec_gate = False, 1.0, None
+                    logging.info(
+                        "[EXEC_GATE_BYPASS] paper/sim mode pair=%s side=%s "
+                        "regime=%s hour_utc=%s",
+                        candidate["pair"],
+                        candidate["side"],
+                        candidate["regime"],
+                        _get_execution_hour_utc(candidate["latest"]),
+                    )
 
                 candidate.setdefault("reason_trace", {})
                 candidate["reason_trace"]["raw_score"] = float(candidate["raw_score"])
@@ -3360,12 +3408,20 @@ def scan_once() -> None:
                 }
                 ok, reason = apply_gates(_s_dict)
                 
-                # 2. G4 Whitelist Gate (Phase 2 Synthesis)
-                if ok:
+                # 2. G4 Whitelist Gate (Phase 2 Synthesis) — live execution only
+                if ok and getattr(config, "ENABLE_LIVE_TRADING", False):
                     # Enforce UTC hour for G4 lookup
                     hour = int(s.get("signal_hour_utc", _get_execution_hour_utc(s["latest"])))
                     _s_dict['hour'] = hour
                     ok, reason = g4_whitelist.apply_g4_whitelist(_s_dict)
+                elif ok:
+                    logging.info(
+                        "[G4_BYPASS] paper/sim mode — whitelist skipped "
+                        f"pair={s.get('pair')} "
+                        f"side={s.get('side')} "
+                        f"policy={_s_dict.get('policy')} "
+                        f"regime={_s_dict.get('regime')}"
+                    )
 
                 if not ok:
                     logger.info(
@@ -3395,7 +3451,38 @@ def scan_once() -> None:
                 sig["policy_version"] = s.get("policy_version", POLICY_VERSION)
                 sig["policy_activated_at"] = s.get("policy_activated_at", POLICY_ACTIVATED_AT)
                 sig["scan_profile"] = getattr(config, "SCAN_PROFILE", "default")
-                insert_signal(conn, sig)
+                
+                # Tag high-score paper candidates as research-only
+                if not getattr(config, "ENABLE_LIVE_TRADING", False):
+                    if int(round(float(sig.get("score", 0)) / 5) * 5) >= 70:
+                        sig["paper_research_only"] = True
+                        sig["confidence_gate_eligible"] = False
+                        sig["research_reason"] = "wolfram_high_score_exploration"
+                
+                logging.info(
+                    "[INSERT_ATTEMPT] pair=%s side=%s regime=%s score=%.2f policy=%s",
+                    sig.get("pair") or sig.get("symbol"),
+                    sig.get("side"),
+                    sig.get("regime"),
+                    float(sig.get("score", 0) or 0),
+                    sig.get("policy") or sig.get("policy_version"),
+                )
+                
+                try:
+                    insert_signal(conn, sig)
+                    logging.info(
+                        "[INSERT_OK] pair=%s side=%s emitted_count=%d",
+                        sig.get("pair") or sig.get("symbol"),
+                        sig.get("side"),
+                        len(emitted),
+                    )
+                except Exception as e:
+                    logging.exception(
+                        "[INSERT_FAIL] pair=%s side=%s error=%s",
+                        sig.get("pair") or sig.get("symbol"),
+                        sig.get("side"),
+                        e,
+                    )
                 log_event("INFO", "scanner", "phase2_inserted", {
                     "pair": s["pair"],
                     "side": s["side"],
