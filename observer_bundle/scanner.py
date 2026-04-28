@@ -86,6 +86,14 @@ except ImportError:
     MOEDGE_AVAILABLE = False
     logging.warning("MoEdge not installed - pre-filter disabled")
 
+# Paper resolver integration
+try:
+    from quant_core.paper_resolver import resolve_paper_orders
+    PAPER_RESOLVER_AVAILABLE = True
+except ImportError:
+    PAPER_RESOLVER_AVAILABLE = False
+    logging.warning("Paper resolver not installed - outcome resolution disabled")
+
 # Global client to ensure session re-use for fast execution snapshotting
 _micro_client = MicrostructureClient()
 
@@ -3402,6 +3410,17 @@ def scan_once() -> None:
                     "policy_version": sig.get("policy_version"),
                     "scan_profile": sig.get("scan_profile"),
                 })
+
+            # Paper Resolver: Resolve open paper orders against current prices
+            if PAPER_RESOLVER_AVAILABLE:
+                current_prices = {}
+                for r in results:
+                    if "pair" in r and r.get("latest") is not None:
+                        current_prices[r["pair"]] = float(r["latest"]["close"])
+                if current_prices:
+                    resolved = resolve_paper_orders(conn, current_prices)
+                    if any(resolved.values()):
+                        logging.info(f"🜃 Resolver: {resolved}")
 
             duration = time.time() - started
             _LAST_SCAN_TS = started
