@@ -9,3 +9,22 @@ __pycache__/
 *.py[cod]
 *:Zone.Identifier
 *Zone.Identifier
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Backup files
+*.bak
+*.bak.*
+
+# Compiled Python
+*.pyc
+*.pyo
+
+# IDE / tool dirs
+.claude/
+
+# Scratch / garbage
+nul
