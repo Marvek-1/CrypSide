@@ -1,14 +1,25 @@
 import type {Metadata} from 'next';
+import type {ReactNode} from 'react';
 import Link from 'next/link';
-import './globals.css'; // Global styles
+import './globals.css';
 import RuntimeBadge from './components/RuntimeBadge';
 
 export const metadata: Metadata = {
-  title: 'MoStar Sovereign Data Conduit',
-  description: 'High-fidelity Synthetic Data Generation Platform with strict data sovereignty.',
+  title: 'MoStar CrypSide',
+  description: 'MoStar sovereign scanner, ingestion, training, observer, and live terminal.',
 };
 
-export default function RootLayout({children}: {children: React.ReactNode}) {
+const navItems = [
+  {href: '/', label: 'Home'},
+  {href: '/ingestion', label: 'Ingestion'},
+  {href: '/training', label: 'Training'},
+  {href: '/observer', label: 'Observer'},
+  {href: '/live', label: 'Live'},
+  {href: '/live-engine', label: 'Live Engine'},
+  {href: '/live-trading', label: 'Live Trading'},
+];
+
+export default function RootLayout({children}: {children: ReactNode}) {
   return (
     <html lang="en">
       <head>
@@ -43,45 +54,44 @@ export default function RootLayout({children}: {children: React.ReactNode}) {
           }}
         />
       </head>
-      <body className="bg-[#050505] text-white flex flex-col min-h-screen font-sans" suppressHydrationWarning>
-        <header className="border-b border-[#222] px-6 h-16 flex items-center justify-between">
-          <div className="flex items-center gap-8">
-            <div className="text-2xl font-black tracking-tighter italic">MoStar</div>
-            <nav className="flex gap-6 text-xs font-bold uppercase tracking-widest text-gray-500">
-              <Link href="/" className="hover:text-white transition-colors">
-                Ingestion Node
-              </Link>
-              <Link href="/training" className="hover:text-white transition-colors">
-                Training
-              </Link>
-              <Link href="/observer" className="hover:text-white transition-colors">
-                Observer
-              </Link>
-              <Link href="/live-engine" className="hover:text-white transition-colors text-cyan-400">
-                Live Terminal
-              </Link>
+      <body className="mostar-app-body font-sans" suppressHydrationWarning>
+        <header className="mostar-root-header">
+          <div className="mostar-root-inner">
+            <Link href="/" className="mostar-root-brand" aria-label="MoStar CrypSide home">
+              <span className="mostar-root-brand-mark">Mo</span>
+              <span>
+                <span className="block text-base leading-none">MoStar</span>
+                <span className="block text-[10px] font-black uppercase tracking-[0.22em] text-[var(--mostar-gold)]">
+                  CrypSide
+                </span>
+              </span>
+            </Link>
+
+            <nav className="mostar-root-nav" aria-label="Primary navigation">
+              {navItems.map((item) => (
+                <Link key={item.href} href={item.href} className="mostar-root-nav-link">
+                  {item.label}
+                </Link>
+              ))}
             </nav>
           </div>
-          <div className="flex items-center gap-4">
-             <RuntimeBadge />
-             <div className="bg-[#111] px-3 py-1 rounded border border-[#333] text-[10px] font-mono text-cyan-400">
-               NODE: SECURE
-             </div>
-             <div className="flex items-center gap-2 hidden sm:flex">
-               <span className="text-xs font-bold text-gray-400">DEV:</span>
-               <span className="text-xs font-black bg-white text-black px-2 py-0.5 uppercase">ALEX RIVERA</span>
-             </div>
+
+          <div className="mostar-root-status">
+            <RuntimeBadge />
+            <span className="mostar-pill mostar-pill-gold px-3 py-1 text-[10px]">Node Secure</span>
           </div>
         </header>
-        <div className="flex-1 overflow-auto flex flex-col">
+
+        <div className="mostar-root-main">
           {children}
         </div>
-        <footer className="h-8 bg-[#111] border-t border-[#222] px-6 flex items-center justify-between text-[10px] font-mono text-gray-500 shrink-0">
-          <div className="flex gap-4">
-            <span>SENSORS: OK</span>
-            <span className="text-green-500">LATENCY: 12ms</span>
+
+        <footer className="mostar-root-footer">
+          <div className="flex flex-wrap gap-3">
+            <span>Routes: Connected</span>
+            <span className="mostar-text-live">Frontend: Online</span>
           </div>
-          <div>SYNCED WITH NEURAL NETWORK CLUSTER [AFR-1]</div>
+          <div>MoStar Industries / Sovereign Scanner Console</div>
         </footer>
       </body>
     </html>
