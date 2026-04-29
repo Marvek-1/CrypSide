@@ -1480,45 +1480,21 @@ def classify_regime(df4h: pd.DataFrame) -> str:
     if getattr(config, "BTC_REGIME_MODE", "adaptive") == "adaptive":
         ema20_v = float(latest.get("ema20", 0.0) or 0.0)
         ema50_v = float(latest.get("ema50", 0.0) or 0.0)
-        close_v = float(latest.get("close", 0.0) or 0.0)
-        ema_spread = abs(ema20_v - ema50_v) / close_v if close_v > 0 else 0.0
-        lookback_close = float(x["close"].iloc[-21]) if len(x) >= 21 else close_v
-        ret_20 = ((close_v / lookback_close) - 1.0) if lookback_close > 0 else 0.0
+        # EMA spread as a signed percentage: positive = EMA20 above EMA50
+        ema_spread_pct = ((ema20_v - ema50_v) / ema50_v * 100) if ema50_v > 0 else 0.0
 
-        strong_adx = float(getattr(config, "BTC_REGIME_ADX_STRONG", 26.0))
-        trend_adx = float(getattr(config, "BTC_REGIME_ADX_TREND", 18.0))
-        strong_spread = float(getattr(config, "BTC_REGIME_EMA_SPREAD_STRONG", 0.018))
-        trend_spread = float(getattr(config, "BTC_REGIME_EMA_SPREAD_TREND", 0.0075))
-        strong_ret = float(getattr(config, "BTC_REGIME_RETURN_STRONG", 0.08))
-        trend_ret = float(getattr(config, "BTC_REGIME_RETURN_TREND", 0.03))
+        spread_strong = float(getattr(config, "BTC_EMA_SPREAD_STRONG", 1.5))
+        spread_trend  = float(getattr(config, "BTC_EMA_SPREAD_UPTREND", 0.5))
+        rsi_bull      = float(getattr(config, "BTC_RSI_BULL", 60.0))
+        rsi_bear      = float(getattr(config, "BTC_RSI_BEAR", 40.0))
 
-        if (
-            up
-            and above
-            and (
-                adx_v >= strong_adx
-                or (ema_spread >= strong_spread and ret_20 >= strong_ret)
-            )
-            and rsi_v >= 52
-        ):
+        if ema_spread_pct > spread_strong and rsi_v > rsi_bull:
             return "STRONG_UPTREND"
-        if (
-            dn
-            and below
-            and (
-                adx_v >= strong_adx
-                or (ema_spread >= strong_spread and ret_20 <= -strong_ret)
-            )
-            and rsi_v <= 48
-        ):
+        if ema_spread_pct < -spread_strong and rsi_v < rsi_bear:
             return "STRONG_DOWNTREND"
-        if up and (
-            adx_v >= trend_adx or (ema_spread >= trend_spread and ret_20 >= trend_ret)
-        ):
+        if ema_spread_pct > spread_trend and above:
             return "UPTREND"
-        if dn and (
-            adx_v >= trend_adx or (ema_spread >= trend_spread and ret_20 <= -trend_ret)
-        ):
+        if ema_spread_pct < -spread_trend and below:
             return "DOWNTREND"
 
     if adx_v > 30 and up and above and rsi_v > 55:
