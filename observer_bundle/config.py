@@ -122,6 +122,9 @@ BTC_EMA_SPREAD_UPTREND = _env_float_alias("BTC_EMA_SPREAD_UPTREND", "CRYPSIDE_BT
 BTC_EMA_SPREAD_STRONG  = _env_float_alias("BTC_EMA_SPREAD_STRONG",  "CRYPSIDE_BTC_EMA_SPREAD_STRONG",  "1.5")   # percent
 BTC_RSI_BULL           = _env_float_alias("BTC_RSI_BULL",           "CRYPSIDE_BTC_RSI_BULL",           "60.0")
 BTC_RSI_BEAR           = _env_float_alias("BTC_RSI_BEAR",           "CRYPSIDE_BTC_RSI_BEAR",           "40.0")
+BTC_SMA_PERIOD_LONG    = _env_float_alias("BTC_SMA_PERIOD_LONG",    "CRYPSIDE_BTC_SMA_PERIOD_LONG",    "200")   # institutional macro line
+BTC_SMA_PERIOD_MID     = _env_float_alias("BTC_SMA_PERIOD_MID",     "CRYPSIDE_BTC_SMA_PERIOD_MID",     "50")    # trend confirmation
+BTC_RETURN_STRONG      = _env_float_alias("BTC_RETURN_STRONG",      "CRYPSIDE_BTC_RETURN_STRONG",      "0.05")  # 5% 30-day return for STRONG label
 EXHAUSTION_STRICTNESS = _env_str_alias("EXHAUSTION_STRICTNESS", "CRYPSIDE_EXHAUSTION_STRICTNESS", "medium").strip().lower()
 
 # Scan profile selection: live strict vs sim loose

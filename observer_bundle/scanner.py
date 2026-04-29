@@ -1509,16 +1509,55 @@ def classify_regime(df4h: pd.DataFrame) -> str:
 
 
 def get_btc_macro_regime() -> str:
-    """G_beta source — fail-open to RANGING on API error."""
+    """
+    BTC macro regime using daily candles.
+    Primary signal: price vs 200-day SMA (institutional standard)
+    Secondary: 50-day SMA direction + RSI
+    Fallback: RANGING on any error.
+    """
     try:
-        return classify_regime(fetch_klines("BTCUSDT", "4h", LOOKBACK_4H))
+        df_daily = fetch_klines("BTCUSDT", "1d", 210)
+        if df_daily is None or len(df_daily) < 60:
+            return getattr(config, "BTC_REGIME_FALLBACK", "RANGING")
+
+        df_daily["sma200"] = df_daily["close"].rolling(200).mean()
+        df_daily["sma50"]  = df_daily["close"].rolling(50).mean()
+        df_daily["sma20"]  = df_daily["close"].rolling(20).mean()
+        df_daily["rsi14"]  = rsi(df_daily["close"], 14)
+
+        latest = df_daily.iloc[-1]
+        price  = float(latest["close"])
+        sma200 = float(latest["sma200"])
+        sma50  = float(latest["sma50"])
+        rsi_v  = float(latest["rsi14"])
+
+        above_200       = price > sma200
+        above_50        = price > sma50
+        sma50_above_200 = sma50 > sma200
+
+        price_30d_ago = float(df_daily["close"].iloc[-31]) if len(df_daily) >= 31 else price
+        ret_30 = (price - price_30d_ago) / price_30d_ago
+
+        strong_ret = float(getattr(config, "BTC_RETURN_STRONG", 0.05))
+
+        if above_200 and sma50_above_200 and ret_30 > strong_ret and rsi_v > 55:
+            return "STRONG_UPTREND"
+        if above_200 and above_50:
+            return "UPTREND"
+        # Recovery phase: above 50-SMA with strong momentum but below 200-SMA
+        # BTC recovering from bear lows — classify as UPTREND early-recovery
+        if above_50 and not above_200 and ret_30 > strong_ret:
+            return "UPTREND"
+        if not above_200 and not above_50 and ret_30 < -strong_ret and rsi_v < 45:
+            return "STRONG_DOWNTREND"
+        if not above_200 and not above_50:
+            return "DOWNTREND"
+        return "RANGING"
+
     except Exception as e:
-        fallback_regime = str(getattr(config, "BTC_REGIME_FALLBACK", "RANGING")).upper()
+        fallback = str(getattr(config, "BTC_REGIME_FALLBACK", "RANGING")).upper()
         log_event("WARN", "scanner", "btc_fetch_failed", {"error": str(e)})
-        alert_system_error(
-            "btc_regime", "fetch_failed", str(e), {"fallback_regime": fallback_regime}
-        )
-        return fallback_regime
+        return fallback
 
 
 def get_derivatives_alpha(conn, symbol: str) -> dict:
