@@ -233,7 +233,9 @@ def _trigger_semantic_review(signal_row: dict) -> None:
             headers={"Content-Type": "application/json"},
             method="POST"
         )
-        with urllib.request.urlopen(req, timeout=5) as resp:
+        # Bypass system proxy (HTTP_PROXY env) — Grid API is always localhost
+        _opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+        with _opener.open(req, timeout=5) as resp:
             result = _json.loads(resp.read().decode())
             logging.info(
                 f"[SEMANTIC_REVIEW_RESULT] "
