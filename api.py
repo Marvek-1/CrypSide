@@ -212,6 +212,94 @@ def kill_analytics():
     }
 
 
+@app.get("/training")
+def training_intelligence():
+    """Full gate rejection intelligence from training_candidates."""
+    with (
+        db_conn() as conn,
+        conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur,
+    ):
+        cur.execute("""
+            SELECT
+                rejection_gate,
+                COUNT(*) AS killed_count,
+                ROUND(COUNT(*) * 100.0 / SUM(COUNT(*)) OVER (), 2) AS kill_pct
+            FROM training_candidates
+            WHERE rejection_gate IS NOT NULL
+              AND ts > NOW() - INTERVAL '7 days'
+            GROUP BY rejection_gate
+            ORDER BY killed_count DESC
+            LIMIT 15
+        """)
+        gate_stats = cur.fetchall()
+
+        cur.execute("""
+            SELECT
+                COALESCE(signal_family, 'unknown') AS family,
+                COUNT(*) AS total,
+                COUNT(*) FILTER (WHERE rejection_gate IS NOT NULL) AS killed,
+                COUNT(*) FILTER (WHERE rejection_gate IS NULL) AS passed
+            FROM training_candidates
+            WHERE ts > NOW() - INTERVAL '7 days'
+            GROUP BY signal_family
+            ORDER BY killed DESC
+        """)
+        family_breakdown = cur.fetchall()
+
+        cur.execute("""
+            SELECT
+                COALESCE(regime, 'unknown') AS regime,
+                COUNT(*) AS total,
+                COUNT(*) FILTER (WHERE rejection_gate IS NOT NULL) AS killed,
+                ROUND(
+                    COUNT(*) FILTER (WHERE rejection_gate IS NOT NULL) * 100.0
+                    / NULLIF(COUNT(*), 0), 1
+                ) AS kill_rate_pct
+            FROM training_candidates
+            WHERE ts > NOW() - INTERVAL '7 days'
+            GROUP BY regime
+            ORDER BY killed DESC
+        """)
+        regime_breakdown = cur.fetchall()
+
+        cur.execute("""
+            SELECT
+                symbol AS pair,
+                COUNT(*) AS total_seen,
+                COUNT(*) FILTER (WHERE rejection_gate IS NOT NULL) AS killed
+            FROM training_candidates
+            WHERE ts > NOW() - INTERVAL '7 days'
+            GROUP BY symbol
+            ORDER BY killed DESC
+            LIMIT 10
+        """)
+        top_rejected_pairs = cur.fetchall()
+
+        cur.execute("""
+            SELECT
+                COUNT(*) AS total_7d,
+                COUNT(*) FILTER (WHERE rejection_gate IS NULL) AS passed_7d,
+                COUNT(*) FILTER (WHERE rejection_gate IS NOT NULL) AS killed_7d,
+                ROUND(
+                    COUNT(*) FILTER (WHERE rejection_gate IS NOT NULL) * 100.0
+                    / NULLIF(COUNT(*), 0), 1
+                ) AS kill_rate_pct
+            FROM training_candidates
+            WHERE ts > NOW() - INTERVAL '7 days'
+        """)
+        summary = cur.fetchone()
+
+    return {
+        "summary": summary,
+        "gate_stats": gate_stats,
+        "family_breakdown": family_breakdown,
+        "regime_breakdown": regime_breakdown,
+        "top_rejected_pairs": top_rejected_pairs,
+        "window": "7d",
+        "last_checked": time.time(),
+    }
+
+
 @app.get("/api/v1/confidence-gate")
 def get_confidence_gate():
     """Returns the current confidence gate status and metrics."""

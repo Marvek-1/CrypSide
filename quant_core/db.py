@@ -12,6 +12,91 @@ from observer_bundle.config import CURRENT_POLICY_VERSION as POLICY_VERSION
 sys.path.insert(0, "/home/idona/MoStar/MoStar-Grid")
 
 
+# ─── Semantic review (Phase 2af) ──────────────────────────────────────────
+
+
+async def trigger_semantic_review(signal_data: dict, signal_id: str, side_value: str, entry_value: float, tp_value):
+    """
+    Standalone semantic review function for scanner integration.
+    Calls MoScriptEngine to validate signals and creates execution_intents if approved.
+    """
+    from core.grid_orchestrator.core_engine.moscript_engine import MoScriptEngine
+
+    engine = MoScriptEngine()
+    result = await engine.execute_ritual(
+        "SIGNAL_CERTIFY",
+        {
+            "signal_id": signal_id,
+            "regime_version": signal_data.get("regime_version", "v2_adx_ema_rsi"),
+            "score": float(signal_data.get("score", 0)),
+            "execution_grade": signal_data.get("execution_grade", False),
+            "expires_at": signal_data.get("expires_at"),
+            "asset": signal_data.get("pair"),
+            "risk_class": signal_data.get("risk_class", "medium"),
+        },
+    )
+
+    # Get pool for database operations
+    db_url = os.getenv("DATABASE_URL") or DATABASE_URL
+    if not db_url:
+        raise RuntimeError("DATABASE_URL is required for semantic review")
+
+    pool = await asyncpg.create_pool(dsn=db_url)
+
+    # Persist to semantic_reviews table
+    async with pool.acquire() as conn:
+        await conn.execute(
+            """
+            INSERT INTO semantic_reviews (
+                signal_id, intent_id, status, reason, mo_lingua_packet,
+                regime_version, score, risk_class, execution_mode, live_execution
+            ) VALUES ($1, NULL, $2, $3, $4, $5, $6, $7, $8, $9)
+            """,
+            signal_id,
+            result.get("status"),
+            result.get("reason"),
+            result.get("mo_lingua_packet"),
+            signal_data.get("regime_version", "v2_adx_ema_rsi"),
+            float(signal_data.get("score", 0)),
+            signal_data.get("risk_class", "medium"),
+            result.get("execution_mode"),
+            result.get("live_execution", False),
+        )
+
+    # If approved, persist to execution_intents table
+    if result.get("status") == "APPROVED_FOR_PAPER":
+        async with pool.acquire() as conn:
+            await conn.execute(
+                """
+                INSERT INTO execution_intents (
+                    signal_id, asset, side, entry, stop_loss, take_profit,
+                    status, execution_mode, live_execution, requires_manual,
+                    mo_lingua_packet, risk_class, max_risk_pct,
+                    research_only, confidence_gate_eligible, research_reason
+                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+                """,
+                signal_id,
+                signal_data.get("pair"),
+                str(side_value).upper(),
+                float(entry_value),
+                float(signal_data["stop_loss"]),
+                [float(tp_value)] if tp_value else [],
+                "APPROVED_FOR_PAPER",
+                "paper",
+                False,
+                True,
+                result.get("mo_lingua_packet"),
+                signal_data.get("risk_class", "medium"),
+                0.5,
+                signal_data.get("research_only", False),
+                signal_data.get("confidence_gate_eligible", True),
+                signal_data.get("research_reason"),
+            )
+
+    await pool.close()
+    return result
+
+
 async def get_pool():
     if DATABASE_URL:
         return await asyncpg.create_pool(dsn=DATABASE_URL)
@@ -132,7 +217,7 @@ async def append_signal(pool, signal_data: dict):
             str(regime_version_value),
         )
 
-    async def _trigger_semantic_review(signal_data: dict):
+    async def _trigger_semantic_review(signal_data: dict, signal_id: str, side_value: str, entry_value: float, tp_value):
         from core.grid_orchestrator.core_engine.moscript_engine import MoScriptEngine
 
         engine = MoScriptEngine()
@@ -177,8 +262,9 @@ async def append_signal(pool, signal_data: dict):
                     INSERT INTO execution_intents (
                         signal_id, asset, side, entry, stop_loss, take_profit,
                         status, execution_mode, live_execution, requires_manual,
-                        mo_lingua_packet, risk_class, max_risk_pct
-                    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+                        mo_lingua_packet, risk_class, max_risk_pct,
+                        research_only, confidence_gate_eligible, research_reason
+                    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
                     """,
                     signal_id,
                     signal_data.get("pair"),
@@ -193,9 +279,12 @@ async def append_signal(pool, signal_data: dict):
                     result.get("mo_lingua_packet"),
                     signal_data.get("risk_class", "medium"),
                     0.5,
+                    signal_data.get("research_only", False),
+                    signal_data.get("confidence_gate_eligible", True),
+                    signal_data.get("research_reason"),
                 )
 
     try:
-        asyncio.create_task(_trigger_semantic_review(signal_data))
+        asyncio.create_task(trigger_semantic_review(signal_data, signal_id, side_value, entry_value, tp_value))
     except RuntimeError:
-        asyncio.run(_trigger_semantic_review(signal_data))
+        asyncio.run(trigger_semantic_review(signal_data, signal_id, side_value, entry_value, tp_value))

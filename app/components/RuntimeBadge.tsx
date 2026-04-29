@@ -50,7 +50,8 @@ export default function RuntimeBadge() {
         }
 
         const scannerState = (data.scanner_state || '').toLowerCase();
-        if (scannerState && scannerState !== 'running') {
+        const scannerLive = ['running', 'online', 'active'].includes(scannerState);
+        if (scannerState && !scannerLive) {
           setRuntime('red');
           setLabel('SCANNER STOPPED');
           return;

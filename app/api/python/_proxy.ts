@@ -1,5 +1,5 @@
 const PYTHON_API_BASE = process.env.PYTHON_API_BASE_URL || 'http://127.0.0.1:8787';
-const REQUEST_TIMEOUT_MS = 5000;
+const REQUEST_TIMEOUT_MS = 12000;
 
 type ProxyMethod = 'GET' | 'POST';
 

@@ -1,9 +1,39 @@
-              signal_id               |   pair   |             ts             | side  | btc_regime | policy_version |    source     |                                                                                                                                                                                                                                  reason_trace                                                                                                                                                                                                                                   
---------------------------------------+----------+----------------------------+-------+------------+----------------+---------------+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- fd406446-06c3-4615-ac46-570647c38b26 | DOGEUSDT | 2026-04-27 04:29:59.999+03 | LONG  |            |                | observer_live | {"tp1": 0.10007522, "tp2": 0.10083306, "tags": ["CVD"], "risk_usd": 50.0, "cell_allowed": true, "reasons_fail": [], "reasons_pass": ["EMA20 > EMA50 (trend aligned)", "Price above EMA20", "RSI 56.4 in bull zone", "MACD histogram positive", "Regime: UPTREND", "Volume ratio 1.32 (confirmed)", "Aggressive Market Buying (Positive CVD)"], "score_bucket": 100, "volume_ratio": 1.3185883653345898, "position_size": 118759.14542077, "allowed_cell_key": ["UPTREND", 100]}
- db08eb65-88a7-4cc4-8869-84c54677ff0b | SOLUSDT  | 2026-04-27 04:29:59.999+03 | LONG  |            |                | observer_live | {"tp1": 87.81909661, "tp2": 88.47774153, "tags": ["CVD"], "risk_usd": 50.0, "cell_allowed": true, "reasons_fail": [], "reasons_pass": ["EMA20 > EMA50 (trend aligned)", "Price above EMA20", "RSI 64.0 in bull zone", "MACD histogram positive", "Regime: RANGING", "Volume ratio 1.77 (confirmed)", "Aggressive Market Buying (Positive CVD)"], "score_bucket": 90, "volume_ratio": 1.7704523502933733, "position_size": 136.64418786, "allowed_cell_key": ["RANGING", 90]}
- 6d3f4ed7-aaec-4a8c-91ca-7f2617f60638 | ZBTUSDT  | 2026-04-27 01:59:59.999+03 | LONG  |            |                | observer_live | {"tp1": 0.24215795, "tp2": 0.26679988, "tags": ["CVD"], "risk_usd": 50.0, "cell_allowed": true, "reasons_fail": ["Price <= EMA20", "MACD histogram <= 0"], "reasons_pass": ["EMA20 > EMA50 (trend aligned)", "RSI 42.8 in bull zone", "Regime: STRONG_UPTREND", "Volume ratio 2.08 (confirmed)", "Aggressive Market Buying (Positive CVD)"], "score_bucket": 65, "volume_ratio": 2.07916872001778, "position_size": 3652.31127306, "allowed_cell_key": ["STRONG_UPTREND", 65]}
- 103e590a-b1f1-4446-ab4b-fa7841672c51 | BNBUSDT  | 2026-04-26 21:14:59.999+03 | SHORT |            |                | observer_live | {"tp1": 633.09132616, "tp2": 631.59331541, "tags": ["CVD"], "risk_usd": 50.0, "cell_allowed": true, "reasons_fail": ["EMA20 >= EMA50", "Price >= EMA20", "MACD histogram >= 0"], "reasons_pass": ["ADX >= 20", "RSI 67.0 in bear zone", "Regime: RANGING", "Volume ratio 3.17 (confirmed)", "Aggressive Market Selling (Negative CVD)"], "score_bucket": 55, "volume_ratio": 3.169368752027701, "position_size": 60.0796755, "allowed_cell_key": ["RANGING", 55]}
- 8799e50b-a60e-46e9-89f9-3e9bee86e8ce | ORCAUSDT | 2026-04-26 17:44:59.999+03 | LONG  |            |                | observer_live | {"tp1": 1.64708071, "tp2": 1.77770178, "tags": ["CVD"], "risk_usd": 50.0, "cell_allowed": true, "reasons_fail": ["Price <= EMA20", "MACD histogram <= 0"], "reasons_pass": ["EMA20 > EMA50 (trend aligned)", "RSI 41.5 in bull zone", "Regime: STRONG_UPTREND", "Volume ratio 1.30 (confirmed)", "Aggressive Market Buying (Positive CVD)"], "score_bucket": 65, "volume_ratio": 1.3010838228152721, "position_size": 689.01594481, "allowed_cell_key": ["STRONG_UPTREND", 65]}
-(5 rows)
+ id |              signal_id               |  asset  | side |    status    | research_only | confidence_gate_eligible | research_reason |          created_at           
+----+--------------------------------------+---------+------+--------------+---------------+--------------------------+-----------------+-------------------------------
+  1 | d42e9024-a597-430a-9843-c66fdd40552c | BTCUSDT | BUY  | PAPER_FILLED | f             | t                        |                 | 2026-04-28 15:21:39.226324+03
+(1 row)
+
+                                                                     Table "public.execution_intents"
+      Column      |           Type           | Collation | Nullable |                    Default                    | Storage  | Compression | Stats target | Description 
+------------------+--------------------------+-----------+----------+-----------------------------------------------+----------+-------------+--------------+-------------
+ id               | bigint                   |           | not null | nextval('execution_intents_id_seq'::regclass) | plain    |             |              | 
+ intent_id        | uuid                     |           | not null | gen_random_uuid()                             | plain    |             |              | 
+ signal_id        | uuid                     |           | not null |                                               | plain    |             |              | 
+ asset            | text                     |           | not null |                                               | extended |             |              | 
+ side             | text                     |           | not null |                                               | extended |             |              | 
+ entry            | numeric                  |           |          |                                               | main     |             |              | 
+ stop_loss        | numeric                  |           |          |                                               | main     |             |              | 
+ take_profit      | numeric[]                |           |          |                                               | extended |             |              | 
+ status           | text                     |           | not null |                                               | extended |             |              | 
+ execution_mode   | text                     |           | not null | 'paper'::text                                 | extended |             |              | 
+ live_execution   | boolean                  |           | not null | false                                         | plain    |             |              | 
+ requires_manual  | boolean                  |           | not null | true                                          | plain    |             |              | 
+ mo_lingua_packet | text                     |           |          |                                               | extended |             |              | 
+ risk_class       | text                     |           |          |                                               | extended |             |              | 
+ max_risk_pct     | numeric                  |           |          | 0.5                                           | main     |             |              | 
+ expires_at       | timestamp with time zone |           |          |                                               | plain    |             |              | 
+ created_at       | timestamp with time zone |           | not null | now()                                         | plain    |             |              | 
+ consumed_at      | timestamp with time zone |           |          |                                               | plain    |             |              | 
+ consumed_by      | text                     |           |          |                                               | extended |             |              | 
+ qseal            | text                     |           |          | '🜃∴🜂'::text                                   | extended |             |              | 
+Indexes:
+    "execution_intents_pkey" PRIMARY KEY, btree (id)
+    "execution_intents_intent_id_key" UNIQUE CONSTRAINT, btree (intent_id)
+    "idx_execution_intents_created" btree (created_at DESC)
+    "idx_execution_intents_signal_id" btree (signal_id)
+    "idx_execution_intents_status" btree (status)
+Check constraints:
+    "chk_mode" CHECK (execution_mode = ANY (ARRAY['paper'::text, 'manual_live'::text, 'semi_autonomous'::text]))
+    "chk_status" CHECK (status = ANY (ARRAY['APPROVED_FOR_REVIEW'::text, 'APPROVED_FOR_PAPER'::text, 'APPROVED_FOR_LIVE'::text, 'DENIED_BY_RISK'::text, 'DENIED_BY_EXPIRY'::text, 'DENIED_BY_DOCTRINE'::text, 'DENIED_BY_SCORE_CEILING'::text, 'DENIED_BY_SCORE_FLOOR'::text, 'DENIED_BY_REGIME_VERSION'::text]))
+Access method: heap
 

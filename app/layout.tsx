@@ -1,7 +1,7 @@
 import type {Metadata} from 'next';
 import type {ReactNode} from 'react';
 import Link from 'next/link';
-import './globals.css';
+// import './globals.css';
 import RuntimeBadge from './components/RuntimeBadge';
 
 export const metadata: Metadata = {

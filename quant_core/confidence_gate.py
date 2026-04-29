@@ -55,6 +55,7 @@ def calculate_confidence_gate(conn) -> GateStatus:
             FROM paper_orders
             WHERE regime_version = 'v2_adx_ema_rsi'
               AND outcome IN ('WIN','LOSS','EXPIRED')
+              AND confidence_gate_eligible = true
         """
         )
         row = cur.fetchone()
