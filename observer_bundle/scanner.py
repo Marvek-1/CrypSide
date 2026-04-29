@@ -1989,11 +1989,18 @@ def score_long_signal(
     funding = alpha.get("funding_rate", 0.0)
     ls_ratio = alpha.get("ls_ratio", 1.0)
     if funding < -0.005 and ls_ratio < 0.9:
-        score += 30
-        reasons_pass.append(
-            f"🔥 SHORT SQUEEZE ALPHA: Funding {funding:.4f}, LS {ls_ratio:.2f}"
-        )
-        tags.append("Squeeze")
+        if score >= 40:
+            score += 30
+            reasons_pass.append(
+                f"🔥 SHORT SQUEEZE ALPHA: Funding {funding:.4f}, LS {ls_ratio:.2f}"
+            )
+            tags.append("Squeeze")
+        else:
+            logging.info(
+                "[SQUEEZE_BONUS_SKIP] base_score=%.1f funding=%.5f ls_ratio=%.2f"
+                " reason=base_score_below_40",
+                score, funding, ls_ratio,
+            )
     elif ls_ratio > 2.5:
         score -= 20
         reasons_fail.append(f"Crowded Longs (LS {ls_ratio:.2f})")
@@ -4279,6 +4286,15 @@ def scan_once() -> None:
                     "policy": s.get("policy_version", s.get("policy", POLICY_VERSION)),
                 }
                 ok, reason = apply_gates(_s_dict)
+
+                # CUT 2: Reject signals with no identifiable structural setup
+                if ok and (s.get("signal_family") or "none").lower() == "none":
+                    logger.info(
+                        "[FAMILY_NONE_REJECTED] pair=%s side=%s score=%.2f"
+                        " — no structural setup classified, skipping",
+                        s["pair"], s["side"], float(s["score"]),
+                    )
+                    continue
 
                 # 2. G4 Whitelist Gate (Phase 2 Synthesis) — live execution only
                 if ok and getattr(config, "ENABLE_LIVE_TRADING", False):

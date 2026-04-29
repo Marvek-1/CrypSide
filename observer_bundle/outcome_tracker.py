@@ -195,17 +195,12 @@ def resolve_signal(sig: dict) -> tuple[str | None, float | None, dict | None]:
     side = sig["side"]
     entry = float(sig["entry"])
 
-    # Scale-out targets from reason_trace
+    # Single TP target — tp1 from reason_trace (surgical exit mode: 2.0R)
     trace = sig.get("reason_trace", {})
     tp1 = float(trace.get("tp1", sig["take_profit"]))
-    tp2 = float(trace.get("tp2", sig["take_profit"]))
+    current_sl = float(sig["stop_loss"])
 
-    # State from DB
-    is_partial = sig.get("is_partial", False)
-    trailing_sl = sig.get("trailing_sl")
-    current_sl = float(trailing_sl) if trailing_sl is not None else float(sig["stop_loss"])
-
-    # Adverse Excursion Tracking (MAE) in R-multiples
+    # Adverse Excursion Tracking (MAE)
     max_adv_r = float(sig.get("adverse_excursion") or 0.0)
     initial_sl = float(sig["stop_loss"])
     r_dist = abs(entry - initial_sl) if abs(entry - initial_sl) > 0 else 1e-8
@@ -221,36 +216,19 @@ def resolve_signal(sig: dict) -> tuple[str | None, float | None, dict | None]:
     for _, row in df.iterrows():
         high, low = float(row["high"]), float(row["low"])
 
-        # Track maximum adverse excursion in R-multiples
         current_adv_r = (entry - low) / r_dist if side == "LONG" else (high - entry) / r_dist
         max_adv_r = max(max_adv_r, current_adv_r)
 
         if side == "LONG":
-            # 1. Check for Stop Loss / Breakeven
             if low <= current_sl:
-                if is_partial:
-                    return "TP1_ONLY", TP1_R, _meta(exit_price=current_sl)
                 return "LOSS", -SL_R, _meta(exit_price=current_sl)
-
-            # 2. Check for Scale-out (TP1)
-            if not is_partial and high >= tp1:
-                return "HIT_TP1", TP1_R, _meta(exit_price=tp1, is_partial=True, trailing_sl=entry - (r_dist * BREAKEVEN_BUFFER))
-
-            # 3. Check for Final Target (TP2)
-            if high >= tp2:
-                return "TP2_WIN", TP2_R, _meta(exit_price=tp2)
-
-        else:  # SHORT
+            if high >= tp1:
+                return "WIN", TP1_R, _meta(exit_price=tp1)
+        else:
             if high >= current_sl:
-                if is_partial:
-                    return "TP1_ONLY", TP1_R, _meta(exit_price=current_sl)
                 return "LOSS", -SL_R, _meta(exit_price=current_sl)
-
-            if not is_partial and low <= tp1:
-                return "HIT_TP1", TP1_R, _meta(exit_price=tp1, is_partial=True, trailing_sl=entry + (r_dist * BREAKEVEN_BUFFER))
-
-            if low <= tp2:
-                return "TP2_WIN", TP2_R, _meta(exit_price=tp2)
+            if low <= tp1:
+                return "WIN", TP1_R, _meta(exit_price=tp1)
 
     return None, None, {"adverse_excursion": max_adv_r}
 
@@ -294,26 +272,9 @@ def run_once():
                 }
                 expired += 1
             else:
-                # 3. Resolve using new Scale-out / Breakeven logic
                 outcome, r_mult, updates_meta = resolve_signal(row)
             
-            if outcome == "HIT_TP1" and updates_meta is not None:
-                # Persist partial state and MAE but keep outcome NULL to continue tracking for TP2
-                with db_conn() as conn, conn.cursor() as cur:
-                    cur.execute(
-                        """
-                        UPDATE signals
-                        SET is_partial = TRUE, trailing_sl = %s, adverse_excursion = %s, updated_at = NOW()
-                        WHERE id = %s
-                        """,
-                        (updates_meta.get("trailing_sl"), updates_meta.get("adverse_excursion"), row["id"]),
-                    )
-                    conn.commit()
-                log_event("INFO", "outcome_tracker", "scale_out_hit", {"signal_id": row["signal_id"], "pair": row["pair"]})
-                
-                # Send Telegram alert for scale-out
-                _send_scale_out_alert(row, updates_meta)
-            elif outcome is not None:
+            if outcome is not None:
                 # Final resolution: WIN or LOSS. Scaled-out winners remain WIN with a smaller R multiple.
                 with db_conn() as conn, conn.cursor() as cur:
                     cur.execute(

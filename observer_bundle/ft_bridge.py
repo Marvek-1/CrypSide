@@ -224,7 +224,11 @@ class FreqTradeBridge:
         funding = alpha.get("funding_rate", 0.0)
         ls_ratio = alpha.get("ls_ratio", 1.0)
         if funding < -0.005 and ls_ratio < 0.9:
-            score += 30; reasons_pass.append(f"SHORT SQUEEZE ALPHA: Funding {funding:.4f}, LS {ls_ratio:.2f}")
+            if score >= 40:
+                score += 30; reasons_pass.append(f"SHORT SQUEEZE ALPHA: Funding {funding:.4f}, LS {ls_ratio:.2f}")
+            else:
+                import logging as _log
+                _log.info("[SQUEEZE_BONUS_SKIP] base_score=%.1f funding=%.5f ls_ratio=%.2f reason=base_score_below_40", score, funding, ls_ratio)
         elif ls_ratio > 2.5:
             score -= 20; reasons_fail.append(f"Crowded Longs (LS {ls_ratio:.2f})")
         
