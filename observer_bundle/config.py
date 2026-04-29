@@ -167,9 +167,14 @@ if ENABLE_LIVE_TRADING:
             ("RANGING", 60),
         }
 else:
-    # Sim coherence profile: exploratory with soft-gating + side-balance controller
+    # Sim coherence profile: quality-locked (Score Quality Lock v1)
+    # MIN_SIGNAL_SCORE raised 20->65. Momentum exception enforced in scanner.
     SCAN_PROFILE = "sim_coherence_v1"
-    MIN_SIGNAL_SCORE = 20
+    MIN_SIGNAL_SCORE = 65
+    # Score Quality Lock v1 -- family-specific floors consumed by scanner emission loop
+    MIN_SCORE_MOMENTUM = 55    # momentum: 48% WR best performer, relaxed floor
+    MIN_SCORE_ELIGIBLE = 65    # all other eligible families
+    BLOCKED_FAMILIES = {"breakdown"}  # 27% WR -- toxic, hard-blocked pre-emission
     ADX_MIN_THRESHOLD = 15
     ATR_STRETCH_MAX = 2.5
     REQUIRE_SQUEEZE_GATE = False

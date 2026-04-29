@@ -4296,6 +4296,32 @@ def scan_once() -> None:
                     )
                     continue
 
+                # CUT 2b: Block breakdown family -- 27% WR, toxic (Score Quality Lock v1)
+                _blocked_fams = getattr(config, "BLOCKED_FAMILIES", {"breakdown"})
+                _sig_family = (s.get("signal_family") or "none").lower()
+                if ok and _sig_family in _blocked_fams:
+                    logger.info(
+                        "[FAMILY_BREAKDOWN_REJECTED] pair=%s side=%s family=%s score=%.2f"
+                        " -- below-random edge, hard-blocked",
+                        s["pair"], s["side"], _sig_family, float(s["score"]),
+                    )
+                    continue
+
+                # CUT 2c: Score Quality Lock v1 -- momentum floor=55, all others floor=65
+                if ok:
+                    _sig_family = (s.get("signal_family") or "none").lower()
+                    _momentum_floor = getattr(config, "MIN_SCORE_MOMENTUM", 55)
+                    _general_floor  = getattr(config, "MIN_SCORE_ELIGIBLE",
+                                              getattr(config, "MIN_SIGNAL_SCORE", 65))
+                    _effective_floor = _momentum_floor if _sig_family == "momentum" else _general_floor
+                    if float(s.get("score", 0)) < _effective_floor:
+                        logger.info(
+                            "[SCORE_FLOOR_REJECTED] pair=%s side=%s family=%s score=%.2f floor=%.0f"
+                            " -- below quality floor",
+                            s["pair"], s["side"], _sig_family, float(s["score"]), _effective_floor,
+                        )
+                        continue
+
                 # 2. G4 Whitelist Gate (Phase 2 Synthesis) — live execution only
                 if ok and getattr(config, "ENABLE_LIVE_TRADING", False):
                     # Enforce UTC hour for G4 lookup
@@ -4367,13 +4393,31 @@ def scan_once() -> None:
                 live_mode = getattr(config, "ENABLE_LIVE_TRADING", False)
                 logging.info(f"[TAG_PRE_CHECK] pair={sig.get('pair')}, ENABLE_LIVE_TRADING={live_mode}")
                 if not live_mode:
-                    score_bucket = int(round(float(sig.get("score", 0)) / 5) * 5)
-                    logging.info(f"[TAG_DEBUG] pair={sig.get('pair')}, score={sig.get('score')}, score_bucket={score_bucket}, threshold=70")
-                    if score_bucket >= 70:
+                    # Score Quality Lock v1: low-score signals are research_only
+                    # High-score signals (>=65) are confidence_gate_eligible.
+                    # INVERTED from previous logic which wrongly tagged high scores as research_only.
+                    _eligible_floor = getattr(config, "MIN_SCORE_ELIGIBLE", 65)
+                    _sig_score = float(sig.get("score", 0))
+                    _sig_fam_tag = (sig.get("signal_family") or "none").lower()
+                    _momentum_floor_tag = getattr(config, "MIN_SCORE_MOMENTUM", 55)
+                    _eff_floor_tag = _momentum_floor_tag if _sig_fam_tag == "momentum" else _eligible_floor
+                    if _sig_score < _eff_floor_tag:
                         sig["research_only"] = True
                         sig["confidence_gate_eligible"] = False
-                        sig["research_reason"] = "wolfram_high_score_exploration"
-                        logging.info(f"[TAG_APPLIED] research_only=True, confidence_gate_eligible=False for {sig.get('pair')}")
+                        sig["research_reason"] = "score_below_quality_floor"
+                        logging.info(
+                            "[TAG_RESEARCH_ONLY] pair=%s score=%.2f family=%s floor=%.0f"
+                            " -- below quality floor, research_only=True",
+                            sig.get("pair"), _sig_score, _sig_fam_tag, _eff_floor_tag,
+                        )
+                    else:
+                        sig["research_only"] = False
+                        sig["confidence_gate_eligible"] = True
+                        sig["research_reason"] = None
+                        logging.info(
+                            "[TAG_ELIGIBLE] pair=%s score=%.2f family=%s -- confidence_gate_eligible=True",
+                            sig.get("pair"), _sig_score, _sig_fam_tag,
+                        )
 
                 logging.info(
                     "[INSERT_ATTEMPT] pair=%s side=%s regime=%s score=%.2f policy=%s",
