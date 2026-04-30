@@ -174,7 +174,7 @@ else:
     # Score Quality Lock v1 -- family-specific floors consumed by scanner emission loop
     MIN_SCORE_MOMENTUM = 55    # momentum: 48% WR best performer, relaxed floor
     MIN_SCORE_ELIGIBLE = 65    # all other eligible families
-    BLOCKED_FAMILIES = {"breakdown"}  # 27% WR -- toxic, hard-blocked pre-emission
+    BLOCKED_FAMILIES = {"breakdown", "failed_bounce"}  # 27% & 25% WR -- toxic, hard-blocked pre-emission
     ADX_MIN_THRESHOLD = 15
     ATR_STRETCH_MAX = 2.5
     REQUIRE_SQUEEZE_GATE = False
