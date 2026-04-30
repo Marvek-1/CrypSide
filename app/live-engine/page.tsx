@@ -5,8 +5,21 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { motion } from 'framer-motion';
 import { Icon, IconName, Metric, Panel, cx, fmt, safeFixed } from '../components/mostarUi';
 
-type Signal = { signal_id?: string; id?: string; ts?: string; timestamp?: string; pair: string; side: string; score: number };
+type Signal = {
+  signal_id?: string; id?: string; ts?: string; timestamp?: string;
+  pair: string; side: string; score: number;
+  entry?: number; stop_loss?: number; take_profit?: number;
+  regime?: string; signal_family?: string;
+  outcome?: string; r_multiple?: number;
+};
 type Stats = { total_signals: number; win_rate: number; profit_factor: number; signals_per_day: number };
+
+function outcomeTone(outcome?: string) {
+  if (!outcome) return 'mostar-text-muted';
+  if (outcome === 'WIN') return 'mostar-text-live';
+  if (outcome === 'LOSS') return 'mostar-text-danger';
+  return 'mostar-text-muted';
+}
 
 function statusTone(status: string) {
   const s = status.toLowerCase();
@@ -138,8 +151,45 @@ export default function LiveExecutionTerminal() {
           </div>
         </Panel>
 
-        <Panel className="xl:col-span-12" title="Latest Signals" subtitle="Raw incoming intelligence from /api/python/signals?limit=25." icon="terminal">
-          {signals.length === 0 ? <div className="mostar-status-warning rounded-3xl p-5 text-sm font-black uppercase tracking-[0.18em]">No live data yet.</div> : <div className="overflow-hidden rounded-3xl border border-white/10 bg-[var(--mostar-night-blue)]/55"><div className="grid grid-cols-12 border-b border-white/10 px-4 py-3 text-[10px] font-black uppercase tracking-[0.2em] text-[var(--mostar-muted)]"><div className="col-span-3 md:col-span-2">Side</div><div className="col-span-4 md:col-span-3">Pair</div><div className="hidden md:col-span-3 md:block">Score</div><div className="col-span-5 text-right md:col-span-4">Timestamp</div></div><div className="divide-y divide-white/10 font-mono text-xs">{signals.map((sig, index) => { const id = String(sig.signal_id || sig.id || `${sig.pair}-${sig.ts || sig.timestamp || index}`); const side = String(sig.side || 'UNKNOWN').toUpperCase(); return <motion.div key={id} initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: index * 0.018 }} className="grid grid-cols-12 items-center px-4 py-3 hover:bg-[var(--mostar-blue-bg)]"><div className="col-span-3 md:col-span-2"><span className={cx('rounded-full px-2 py-1 text-[10px] font-black', sideTone(side))}>{side}</span></div><div className="col-span-4 font-black md:col-span-3">{sig.pair}</div><div className="hidden text-[var(--mostar-muted)] md:col-span-3 md:block">{safeFixed(sig.score, 3)}</div><div className="col-span-5 truncate text-right text-[var(--mostar-muted)] md:col-span-4">{sig.ts || sig.timestamp || 'n/a'}</div></motion.div>; })}</div></div>}
+        <Panel className="xl:col-span-12" title="Execution Ledger" subtitle="Latest paper trades and live signal intelligence — newest first" icon="scroll">
+          {signals.length === 0 ? (
+            <div className="mostar-status-warning rounded-3xl p-5 text-sm font-black uppercase tracking-[0.18em]">No live data yet.</div>
+          ) : (
+            <div className="mostar-table-shell overflow-x-auto rounded-3xl">
+              <table className="w-full text-xs">
+                <thead className="mostar-table-head">
+                  <tr>
+                    {['Pair', 'Side', 'Family', 'Score', 'Entry', 'SL', 'TP', 'Regime', 'Outcome', 'R', 'Time'].map(h => (
+                      <th key={h} className="mostar-text-muted px-4 py-3 text-left text-[10px] font-black uppercase tracking-[0.18em] whitespace-nowrap">{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-white/10 font-mono">
+                  {signals.map((s, index) => {
+                    const id = String(s.signal_id || s.id || `${s.pair}-${s.ts || s.timestamp || index}`);
+                    const side = String(s.side || 'UNKNOWN').toUpperCase();
+                    return (
+                      <motion.tr key={id} initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: index * 0.018 }} className="mostar-table-row">
+                        <td className="mostar-text-white px-4 py-3 font-bold whitespace-nowrap">{s.pair}</td>
+                        <td className="px-4 py-3"><span className={cx('rounded-full px-2 py-1 text-[10px] font-black', sideTone(side))}>{side}</span></td>
+                        <td className="mostar-text-muted px-4 py-3 capitalize font-sans text-[11px]">{s.signal_family || 'none'}</td>
+                        <td className="mostar-text-gold px-4 py-3 font-bold">{safeFixed(s.score, 1)}</td>
+                        <td className="mostar-text-white px-4 py-3">{s.entry != null ? safeFixed(s.entry, 4) : '—'}</td>
+                        <td className="mostar-text-danger px-4 py-3">{s.stop_loss != null ? safeFixed(s.stop_loss, 4) : '—'}</td>
+                        <td className="mostar-text-live px-4 py-3">{s.take_profit != null ? safeFixed(s.take_profit, 4) : '—'}</td>
+                        <td className="mostar-text-muted px-4 py-3 font-sans text-[10px] whitespace-nowrap">{s.regime || '—'}</td>
+                        <td className={cx('px-4 py-3 font-sans font-black text-[11px]', outcomeTone(s.outcome))}>{s.outcome ?? '—'}</td>
+                        <td className={cx('px-4 py-3', s.r_multiple != null ? (s.r_multiple > 0 ? 'mostar-text-live' : 'mostar-text-danger') : 'mostar-text-muted')}>
+                          {s.r_multiple != null ? `${s.r_multiple > 0 ? '+' : ''}${safeFixed(s.r_multiple, 2)}R` : '—'}
+                        </td>
+                        <td className="mostar-text-muted px-4 py-3 font-sans text-[10px] whitespace-nowrap">{s.ts || s.timestamp ? new Date(s.ts || s.timestamp!).toLocaleString() : '—'}</td>
+                      </motion.tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
         </Panel>
       </main>
     </>

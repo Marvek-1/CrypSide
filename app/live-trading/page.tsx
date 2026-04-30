@@ -26,6 +26,12 @@ type StatsData = {
   signals_remaining?: number;
 };
 
+type Signal = {
+  signal_id?: string; id?: string; ts?: string; timestamp?: string;
+  pair: string; side: string; score: number;
+  entry?: number; stop_loss?: number; take_profit?: number;
+};
+
 type IntentRow = {
   intent_id: string;
   signal_id: string;
@@ -52,8 +58,9 @@ const RISK_CONTROLS = [
 ];
 
 const EXCHANGES = [
-  { name: 'Binance Futures', status: 'read-only', type: 'USD-M Futures', note: 'Public market data only. No API key wired for orders.' },
-  { name: 'Bybit Futures', status: 'disconnected', type: 'USDT Perp', note: 'Not connected.' },
+  { id: 'binance', name: 'Binance Futures', type: 'USD-M Futures' },
+  { id: 'bybit', name: 'Bybit Futures', type: 'USDT Perp' },
+  { id: 'gate', name: 'Gate.io Futures', type: 'USDT Perp' },
 ];
 
 function GateRing({ gateStatus, pct: gPct }: { gateStatus: string; pct: number }) {
@@ -90,15 +97,18 @@ function GateRing({ gateStatus, pct: gPct }: { gateStatus: string; pct: number }
 export default function LiveTradingCockpit() {
   const [gate, setGate] = useState<GateData | null>(null);
   const [stats, setStats] = useState<StatsData | null>(null);
+  const [signals, setSignals] = useState<Signal[]>([]);
+  const [selectedSignal, setSelectedSignal] = useState<Signal | null>(null);
   const [lastRefresh, setLastRefresh] = useState('—');
   const [apiError, setApiError] = useState(false);
 
   useEffect(() => {
     const load = async () => {
       try {
-        const [gateRes, statsRes] = await Promise.all([
+        const [gateRes, statsRes, sigRes] = await Promise.all([
           fetch('/api/python/confidence-gate', { cache: 'no-store' }),
           fetch('/api/python/stats', { cache: 'no-store' }),
+          fetch('/api/python/signals?limit=25', { cache: 'no-store' }),
         ]);
         if (gateRes.ok) {
           const g = await gateRes.json();
@@ -107,6 +117,10 @@ export default function LiveTradingCockpit() {
         if (statsRes.ok) {
           const s = await statsRes.json();
           setStats(s);
+        }
+        if (sigRes.ok) {
+          const s = await sigRes.json();
+          setSignals(Array.isArray(s.signals) ? s.signals : []);
         }
         setApiError(!gateRes.ok && !statsRes.ok);
         setLastRefresh(new Date().toLocaleTimeString());
@@ -197,29 +211,75 @@ export default function LiveTradingCockpit() {
           </div>
         </Panel>
 
-        {/* Exchange connections */}
-        <Panel className="xl:col-span-6" title="Exchange Connections" subtitle="Read-only public data only. No order API keys wired." icon="radar">
-          <div className="space-y-3">
-            {EXCHANGES.map((ex) => (
-              <div key={ex.name} className="mostar-card rounded-2xl p-4">
-                <div className="flex items-center justify-between gap-3">
-                  <div>
-                    <div className="text-xs font-black">{ex.name}</div>
-                    <div className="text-[10px] text-[var(--mostar-muted)] mt-0.5">{ex.type}</div>
+        {/* Live Signal Feed */}
+        <Panel className="xl:col-span-5" title="Live Signal Feed" subtitle="Select a signal to prepare exchange dockets" icon="activity">
+          <div className="flex h-[400px] flex-col gap-2 overflow-y-auto pr-1">
+            {signals.length === 0 ? (
+              <div className="mostar-text-muted text-xs p-4">No live signals available.</div>
+            ) : (
+              signals.map(s => {
+                const id = s.signal_id || s.id || `${s.pair}-${s.ts}`;
+                const isSelected = selectedSignal?.pair === s.pair && selectedSignal?.ts === s.ts;
+                return (
+                  <button
+                    key={id}
+                    onClick={() => setSelectedSignal(s)}
+                    className={cx(
+                      'flex w-full cursor-pointer flex-col gap-2 rounded-2xl border p-3 text-left transition-colors',
+                      isSelected ? 'border-[var(--mostar-gold)]/50 bg-[var(--mostar-gold)]/10' : 'border-white/10 hover:border-white/20 hover:bg-white/5'
+                    )}
+                  >
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <span className="font-bold">{s.pair}</span>
+                        <span className={cx('text-[10px] font-black uppercase px-2 py-0.5 rounded-full', s.side === 'LONG' ? 'mostar-status-live' : 'mostar-status-danger')}>{s.side}</span>
+                      </div>
+                      <span className="font-mono text-xs mostar-text-gold">{safeFixed(s.score, 1)}</span>
+                    </div>
+                    <div className="text-[10px] text-[var(--mostar-muted)] font-mono flex justify-between">
+                      <span>{s.ts || s.timestamp}</span>
+                      <span>{s.entry ? `EP: ${safeFixed(s.entry, 4)}` : ''}</span>
+                    </div>
+                  </button>
+                );
+              })
+            )}
+          </div>
+        </Panel>
+
+        {/* Exchange Dockets */}
+        <Panel className="xl:col-span-7" title="Exchange Dockets" subtitle="Auto-populated execution parameters" icon="terminal">
+          <div className="space-y-4">
+            {EXCHANGES.map(ex => (
+              <div key={ex.id} className="mostar-card rounded-2xl p-4">
+                <div className="mb-3 flex items-center justify-between border-b border-white/10 pb-3">
+                  <div className="flex items-center gap-2">
+                    <span className="font-black">{ex.name}</span>
+                    <span className="text-[10px] text-[var(--mostar-muted)] px-2 py-0.5 bg-white/5 rounded-full">{ex.type}</span>
                   </div>
-                  <span className={cx(
-                    'rounded-full px-2 py-1 text-[10px] font-black uppercase',
-                    ex.status === 'read-only' ? 'mostar-status-warning' : 'mostar-status-danger'
-                  )}>
-                    {ex.status}
-                  </span>
                 </div>
-                <div className="mt-2 text-[10px] text-[var(--mostar-muted)]">{ex.note}</div>
+
+                {!selectedSignal ? (
+                  <div className="py-6 text-center text-xs font-black uppercase tracking-[0.2em] text-[var(--mostar-muted)]">
+                    Awaiting Signal Selection
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-2 gap-4 text-xs font-mono">
+                    <div><span className="text-[var(--mostar-muted)] block mb-1">Pair</span><span className="font-black text-sm">{selectedSignal.pair}</span></div>
+                    <div><span className="text-[var(--mostar-muted)] block mb-1">Side</span><span className={cx('font-black text-sm', selectedSignal.side === 'LONG' ? 'mostar-text-live' : 'mostar-text-danger')}>{selectedSignal.side}</span></div>
+                    <div><span className="text-[var(--mostar-muted)] block mb-1">Entry Price</span><span>{selectedSignal.entry ? safeFixed(selectedSignal.entry, 4) : 'Market'}</span></div>
+                    <div><span className="text-[var(--mostar-muted)] block mb-1">Take Profit</span><span className="mostar-text-live">{selectedSignal.take_profit ? safeFixed(selectedSignal.take_profit, 4) : '—'}</span></div>
+                    <div><span className="text-[var(--mostar-muted)] block mb-1">Stop Loss</span><span className="mostar-text-danger">{selectedSignal.stop_loss ? safeFixed(selectedSignal.stop_loss, 4) : '—'}</span></div>
+                    <div><span className="text-[var(--mostar-muted)] block mb-1">Score</span><span className="mostar-text-gold">{safeFixed(selectedSignal.score, 1)}</span></div>
+                    <div className="col-span-2 mt-2">
+                      <button disabled className="w-full rounded-xl bg-[var(--mostar-danger)]/10 border border-[var(--mostar-danger)]/30 py-3 text-center text-[10px] font-black uppercase tracking-[0.2em] text-[#FF8585] opacity-80 cursor-not-allowed">
+                        Confidence Gate Locked
+                      </button>
+                    </div>
+                  </div>
+                )}
               </div>
             ))}
-            <div className="rounded-2xl border border-[var(--mostar-danger)]/30 bg-[var(--mostar-danger)]/5 p-4 text-[11px] text-[#FF8585]">
-              ⛔ No exchange API keys stored or wired. Live order placement requires manual approval.
-            </div>
           </div>
         </Panel>
 

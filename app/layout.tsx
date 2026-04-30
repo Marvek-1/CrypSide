@@ -14,7 +14,6 @@ const navItems = [
   {href: '/ingestion', label: 'Ingestion'},
   {href: '/training', label: 'Training'},
   {href: '/observer', label: 'Observer'},
-  {href: '/live', label: 'Live'},
   {href: '/live-engine', label: 'Live Engine'},
   {href: '/live-trading', label: 'Live Trading'},
 ];

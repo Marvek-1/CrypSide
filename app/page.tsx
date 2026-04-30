@@ -7,7 +7,6 @@ const MODULES = [
   { href: '/ingestion', label: 'Ingestion', icon: 'radar' as const, desc: 'Sovereign scanner — live signal feed and gate analytics' },
   { href: '/training', label: 'Training', icon: 'brain' as const, desc: 'Training candidates, gate kill breakdown, regime distribution' },
   { href: '/observer', label: 'Observer', icon: 'eye' as const, desc: 'Live market observer — funding, OI, L/S ratio telemetry' },
-  { href: '/live', label: 'Live', icon: 'activity' as const, desc: 'Live signal stream and execution ledger' },
   { href: '/live-engine', label: 'Live Engine', icon: 'gauge' as const, desc: 'Engine health, scanner state, process monitor' },
   { href: '/live-trading', label: 'Live Trading', icon: 'lock' as const, desc: 'Execution cockpit — locked until confidence gate clears' },
 ];
