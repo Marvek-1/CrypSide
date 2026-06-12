@@ -1,4 +1,4 @@
-const CRYPSIDE_ROOT = '/home/idona/MoStar/CrypSide';
+const CRYPSIDE_ROOT = '/home/idona/MoStar/_apps/financial/crypside/CrypSide';
 const OBSERVER_DIR = `${CRYPSIDE_ROOT}/observer_bundle`;
 const PYTHON_BIN = `${CRYPSIDE_ROOT}/.venv/bin/python3.12`;
 const ENV_FILE = `${CRYPSIDE_ROOT}/.env`;
@@ -8,8 +8,8 @@ module.exports = {
   apps: [
     {
       name: 'crypside-api',
-      cwd: '/home/idona/MoStar/CrypSide',
-      script: '/home/idona/MoStar/CrypSide/.venv/bin/python3.12',
+      cwd: '/home/idona/MoStar/_apps/financial/crypside/CrypSide',
+      script: '/home/idona/MoStar/_apps/financial/crypside/CrypSide/.venv/bin/python3.12',
       args: '-m uvicorn api:app --host 127.0.0.1 --port 8787',
       interpreter: 'none',
       autorestart: true,

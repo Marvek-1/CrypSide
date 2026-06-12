@@ -8,7 +8,7 @@ const MODULES = [
   { href: '/training', label: 'Training', icon: 'brain' as const, desc: 'Training candidates, gate kill breakdown, regime distribution' },
   { href: '/observer', label: 'Observer', icon: 'eye' as const, desc: 'Live market observer — funding, OI, L/S ratio telemetry' },
   { href: '/live-engine', label: 'Live Engine', icon: 'gauge' as const, desc: 'Engine health, scanner state, process monitor' },
-  { href: '/live-trading', label: 'Live Trading', icon: 'lock' as const, desc: 'Execution cockpit — locked until confidence gate clears' },
+  { href: '/live-trading', label: 'Live Trading', icon: 'terminal' as const, desc: 'Execution cockpit armed for live demo deployment with manual approval.' },
 ];
 
 export default function HomePage() {
@@ -48,7 +48,7 @@ export default function HomePage() {
         <div className="relative flex flex-wrap items-center justify-between gap-3">
           <div>
             <div className="mostar-text-white text-[11px] font-black uppercase tracking-[0.24em]">Doctrine</div>
-            <p className="mostar-text-muted mt-1 text-xs">Paper mode only · Live execution locked until confidence gate clears · 200+ eligible resolved signals · PF ≥ 1.30 · Manual approval required</p>
+            <p className="mostar-text-muted mt-1 text-xs">Live Demo Mode Active · Demo/Testnet execution armed · Manual approval required</p>
           </div>
           <span className="mostar-pill mostar-pill-blue px-3 py-1 text-[10px]">🜃∴🜂 Sovereign</span>
         </div>

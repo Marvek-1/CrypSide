@@ -9,31 +9,15 @@ qseal: 🜃∴🜂
 """
 
 import math
-from dataclasses import dataclass
+import os
 
-GATE_MIN_SIGNALS = 200
-GATE_MIN_PF = 1.30
+LIVE_DEMO_MODE = os.getenv("LIVE_DEMO_MODE", "false").lower() == "true"
+GATE_MIN_SIGNALS = int(os.getenv("GATE_MIN_SIGNALS", "200"))
+GATE_MIN_PF = float(os.getenv("GATE_MIN_PF", "1.30"))
 GATE_CONFIDENCE = 0.95
 
 
-@dataclass
-class GateStatus:
-    status: str  # LOCKED / PROVISIONAL / OPEN
-    signal_count: int
-    win_count: int
-    loss_count: int
-    expired_count: int
-    win_rate: float
-    profit_factor: float
-    confidence: float
-    signals_remaining: int
-    pf_gap: float
-    verdict: str
-    mo_lingua: str
-    qseal: str = "🜃∴🜂"
-
-
-def calculate_confidence_gate(conn) -> GateStatus:
+def calculate_confidence_gate(conn) -> dict:
     """
     Reads resolved paper orders and evaluates gate conditions.
     """
@@ -92,48 +76,66 @@ def calculate_confidence_gate(conn) -> GateStatus:
     signals_remaining = max(0, GATE_MIN_SIGNALS - total)
     pf_gap = max(0.0, round(GATE_MIN_PF - profit_factor, 4))
 
-    # Determine gate status
-    if (
+    real_gate_open = (
         total >= GATE_MIN_SIGNALS
         and profit_factor >= GATE_MIN_PF
         and confidence >= GATE_CONFIDENCE
-    ):
+    )
+
+    metrics = {
+        "signal_count": total,
+        "win_rate": round(win_rate, 4),
+        "profit_factor": round(profit_factor, 4),
+        "confidence": round(confidence, 4),
+        "signals_remaining": signals_remaining,
+        "pf_gap": pf_gap,
+        "qseal": "🜃∴🜂",
+    }
+
+    if LIVE_DEMO_MODE:
+        return {
+            "gate_status": "OPEN",
+            "mode": "LIVE_DEMO",
+            "real_execution_allowed": False,
+            "demo_execution_allowed": True,
+            "verdict": "Gate OPEN (Live Demo Mode). Manual demo/testnet pilot may proceed.",
+            "mo_lingua": "🜄GATE:OPEN|🜂LIVE:DEMO_MANUAL_AUTHORIZED|🜃VAULT:SIM_READY",
+            "real_gate_open": real_gate_open,
+            "requirements": {
+                "min_signals": GATE_MIN_SIGNALS,
+                "min_pf": GATE_MIN_PF,
+                "current_signals": total,
+                "current_pf": profit_factor,
+            },
+            **metrics
+        }
+
+    # Production Mode
+    if real_gate_open:
         status = "OPEN"
-        verdict = (
-            f"Gate OPEN. {total} signals. "
-            f"PF={profit_factor:.4f}. "
-            f"Confidence={confidence:.2%}. "
-            f"Warrior may proceed to manual live pilot."
-        )
-        mo_lingua = "🜄GATE:OPEN|🜂LIVE:MANUAL_AUTHORIZED|🜃VAULT:READY"
+        verdict = "Gate OPEN. Warrior may proceed."
+        mo_lingua = "🜄GATE:OPEN|🜂LIVE:AUTHORIZED|🜃VAULT:READY"
     elif total >= GATE_MIN_SIGNALS * 0.5 and profit_factor >= 1.10:
         status = "PROVISIONAL"
-        verdict = (
-            f"Provisional. {signals_remaining} signals remaining. "
-            f"PF={profit_factor:.4f} — needs {pf_gap:.4f} more. "
-            f"Keep collecting."
-        )
+        verdict = f"Provisional. {signals_remaining} signals remaining. PF={profit_factor:.4f} — needs {pf_gap:.4f} more."
         mo_lingua = "🜄GATE:PROVISIONAL|⛔LIVE:BLOCKED|🜃VAULT:WATCHING"
     else:
         status = "LOCKED"
-        verdict = (
-            f"Gate LOCKED. {signals_remaining} signals remaining. "
-            f"PF={profit_factor:.4f}. "
-            f"Oracle still collecting truth."
-        )
-        mo_lingua = "🜄GATE:LOCKED|⛔LIVE:BLOCKED|🜃VAULT:PATIENT"
+        verdict = f"Gate LOCKED. Confidence requirements not met."
+        mo_lingua = "🜄GATE:LOCKED|⛔LIVE:BLOCKED|🜃VAULT:WAIT"
 
-    return GateStatus(
-        status=status,
-        signal_count=total,
-        win_count=wins,
-        loss_count=losses,
-        expired_count=expired,
-        win_rate=round(win_rate, 4),
-        profit_factor=round(profit_factor, 4),
-        confidence=round(confidence, 4),
-        signals_remaining=signals_remaining,
-        pf_gap=pf_gap,
-        verdict=verdict,
-        mo_lingua=mo_lingua,
-    )
+    return {
+        "gate_status": status,
+        "mode": "PRODUCTION",
+        "real_execution_allowed": real_gate_open,
+        "demo_execution_allowed": False,
+        "verdict": verdict,
+        "mo_lingua": mo_lingua,
+        "requirements": {
+            "min_signals": GATE_MIN_SIGNALS,
+            "min_pf": GATE_MIN_PF,
+            "current_signals": total,
+            "current_pf": profit_factor,
+        },
+        **metrics
+    }

@@ -300,21 +300,29 @@ def training_intelligence():
     }
 
 
+@app.post("/api/v1/execution/demo-order")
+async def create_demo_order(payload: dict):
+    from fastapi import HTTPException
+    if not os.getenv("LIVE_DEMO_MODE", "false").lower() == "true":
+        raise HTTPException(status_code=403, detail="Live Demo Mode is disabled")
+
+    order = {
+        "status": "ACCEPTED_DEMO",
+        "real_execution": False,
+        "exchange": payload.get("exchange"),
+        "signal_id": payload.get("signal_id"),
+        "symbol": payload.get("symbol"),
+        "side": payload.get("side"),
+        "manual_approval": True,
+        "message": "Demo order accepted. No real exchange order was placed.",
+    }
+    return order
+
+
 @app.get("/api/v1/confidence-gate")
 def get_confidence_gate():
     """Returns the current confidence gate status and metrics."""
     conn = db_conn()
     gate = calculate_confidence_gate(conn)
     conn.close()
-    return {
-        "gate_status": gate.status,
-        "signal_count": gate.signal_count,
-        "win_rate": gate.win_rate,
-        "profit_factor": gate.profit_factor,
-        "confidence": gate.confidence,
-        "signals_remaining": gate.signals_remaining,
-        "pf_gap": gate.pf_gap,
-        "verdict": gate.verdict,
-        "mo_lingua": gate.mo_lingua,
-        "qseal": gate.qseal,
-    }
+    return gate

@@ -117,7 +117,17 @@ export function Metric({
   );
 }
 
-export function AppShell({ children, max = 'max-w-[1600px]' }: { children: React.ReactNode; max?: string }) {
+export function AppShell({ children, max = 'max-w-[1600px]', fullScreen = false }: { children: React.ReactNode; max?: string; fullScreen?: boolean }) {
+  if (fullScreen) {
+    return (
+      <div className="mostar-shell flex h-screen w-full flex-col overflow-hidden">
+        <div className="mostar-page-grid pointer-events-none fixed inset-0 opacity-25" />
+        <div className="mostar-page-vignette pointer-events-none fixed inset-0" />
+        <div className={cx('relative mx-auto flex w-full flex-1 flex-col p-4 md:p-6 lg:p-8 min-h-0', max)}>{children}</div>
+      </div>
+    );
+  }
+
   return (
     <div className="mostar-shell w-full min-h-screen flex-1 overflow-x-hidden">
       <div className="mostar-page-grid pointer-events-none fixed inset-0 opacity-25" />

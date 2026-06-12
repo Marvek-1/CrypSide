@@ -47,15 +47,15 @@ def compute_ev_buckets() -> Dict:
             """
             SELECT
                 CASE
-                    WHEN moedge_score < 15 THEN '00_15'
-                    WHEN moedge_score < 30 THEN '15_30'
-                    WHEN moedge_score < 45 THEN '30_45'
+                    WHEN score < 15 THEN '00_15'
+                    WHEN score < 30 THEN '15_30'
+                    WHEN score < 45 THEN '30_45'
                     ELSE '45_plus'
                 END AS bucket,
                 COUNT(*) AS n,
                 COALESCE(AVG(CAST(trace_data->>'realized_r' AS NUMERIC)), 0) AS ev
             FROM training_candidates
-            WHERE moedge_score IS NOT NULL
+            WHERE score IS NOT NULL
               AND trace_data->>'realized_r' IS NOT NULL
             GROUP BY bucket
             ORDER BY bucket

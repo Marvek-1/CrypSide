@@ -13,6 +13,7 @@ export async function proxyPython(
   upstreamPath: string,
   method: ProxyMethod,
   searchParams?: URLSearchParams,
+  body?: unknown,
 ): Promise<Response> {
   const url = new URL(upstreamPath, `${PYTHON_API_BASE}/`);
   if (searchParams) {
@@ -21,13 +22,23 @@ export async function proxyPython(
     });
   }
 
+  const fetchOptions: RequestInit = {
+    method,
+    headers: { Accept: 'application/json' },
+    signal: timeoutSignal(REQUEST_TIMEOUT_MS),
+    cache: 'no-store',
+  };
+
+  if (body !== undefined) {
+    fetchOptions.body = typeof body === 'string' ? body : JSON.stringify(body);
+    fetchOptions.headers = {
+      ...fetchOptions.headers,
+      'Content-Type': 'application/json',
+    };
+  }
+
   try {
-    const upstream = await fetch(url.toString(), {
-      method,
-      headers: { Accept: 'application/json' },
-      signal: timeoutSignal(REQUEST_TIMEOUT_MS),
-      cache: 'no-store',
-    });
+    const upstream = await fetch(url.toString(), fetchOptions);
 
     const text = await upstream.text();
     let payload: Record<string, unknown>;
