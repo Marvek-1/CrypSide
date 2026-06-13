@@ -76,6 +76,7 @@ export default function LiveTradingCockpit() {
   const [stats, setStats] = useState<StatsData | null>(null);
   const [signals, setSignals] = useState<Signal[]>([]);
   const [selectedSignal, setSelectedSignal] = useState<Signal | null>(null);
+  const [selectedVenue, setSelectedVenue] = useState(EXCHANGES[0].id);
   const [lastRefresh, setLastRefresh] = useState('—');
 
   useEffect(() => {
@@ -117,6 +118,37 @@ export default function LiveTradingCockpit() {
   // Unified Status Strip Logic
   const execMode = gate?.mode === 'LIVE_DEMO' ? 'LIVE DEMO (ARMED)' : gateStatus === 'OPEN' ? 'PRODUCTION (ARMED)' : 'LOCKED';
   const execModeColor = gateStatus === 'OPEN' || gate?.mode === 'LIVE_DEMO' ? 'text-green-400' : 'text-red-400';
+  const activeExchange = EXCHANGES.find(ex => ex.id === selectedVenue) ?? EXCHANGES[0];
+  const entryPrice = selectedSignal?.entry ?? null;
+  const stopPrice = selectedSignal?.stop_loss ?? null;
+  const targetPrice = selectedSignal?.take_profit ?? null;
+  const orderNotional = 100;
+  const estimatedQty = entryPrice ? orderNotional / entryPrice : null;
+  const canDeploy = Boolean(selectedSignal && (gateStatus === 'OPEN' || gate?.mode === 'LIVE_DEMO'));
+
+  async function deployToVenue(exchangeId: string) {
+    if (!selectedSignal) return;
+
+    try {
+      const res = await fetch('/api/python/execution/demo-order', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          exchange: exchangeId,
+          signal_id: selectedSignal.id || selectedSignal.signal_id,
+          symbol: selectedSignal.pair,
+          side: selectedSignal.side,
+          demo: true,
+          manual_approval: true,
+        }),
+      });
+      const result = await res.json();
+      console.log('Venue deploy result:', result);
+      alert(`Submitted ${selectedSignal.pair} to ${exchangeId}.`);
+    } catch (e) {
+      alert(`Error deploying: ${e}`);
+    }
+  }
 
   async function deployToAllVenues() {
     if (!selectedSignal) return;
@@ -249,7 +281,7 @@ export default function LiveTradingCockpit() {
 
         {/* Center Column - Market Feed */}
         <div className="col-span-1 md:col-span-8 xl:col-span-6 flex flex-col min-h-0">
-          <Panel className="flex-1 flex flex-col min-h-0" title="Live Signal Feed" subtitle="Select a signal to prepare execution dockets" icon="activity">
+          <Panel className="flex-1 flex flex-col min-h-0" title="Live Signal Feed" subtitle="Select a signal to fill the order ticket" icon="activity">
             <div className="flex-1 overflow-y-auto pr-2 space-y-2">
               {signals.length === 0 ? (
                 <div className="text-xs text-zinc-500 text-center py-10">No live signals available.</div>
@@ -289,64 +321,163 @@ export default function LiveTradingCockpit() {
           </Panel>
         </div>
 
-        {/* Right Column - Action / Execution */}
+        {/* Right Column - Exchange Order Entry */}
         <div className="col-span-1 md:col-span-12 xl:col-span-3 flex flex-col gap-4 min-h-0">
-          <Panel className="flex-none" title="Signal Docket" icon="target">
-            {!selectedSignal ? (
-              <div className="py-6 text-center text-[10px] font-black uppercase tracking-[0.2em] text-zinc-600">
-                Awaiting Selection
-              </div>
-            ) : (
-              <div className="grid grid-cols-2 gap-3 text-xs font-mono">
-                <div className="rounded-lg bg-white/5 p-2"><span className="text-[9px] font-black uppercase tracking-[0.2em] text-zinc-500 block mb-1">Pair</span><span className="font-black text-sm text-white">{selectedSignal.pair}</span></div>
-                <div className="rounded-lg bg-white/5 p-2"><span className="text-[9px] font-black uppercase tracking-[0.2em] text-zinc-500 block mb-1">Side</span><span className={cx('font-black text-sm', selectedSignal.side === 'LONG' ? 'text-[var(--mostar-success)]' : 'text-[#FF8585]')}>{selectedSignal.side}</span></div>
-                <div className="rounded-lg bg-white/5 p-2"><span className="text-[9px] font-black uppercase tracking-[0.2em] text-zinc-500 block mb-1">Entry</span><span className="text-zinc-300">{selectedSignal.entry ? safeFixed(selectedSignal.entry, 4) : 'Market'}</span></div>
-                <div className="rounded-lg bg-white/5 p-2"><span className="text-[9px] font-black uppercase tracking-[0.2em] text-zinc-500 block mb-1">Score</span><span className="text-[var(--mostar-gold)]">{safeFixed(selectedSignal.score, 1)}</span></div>
-                <div className="rounded-lg bg-white/5 p-2"><span className="text-[9px] font-black uppercase tracking-[0.2em] text-zinc-500 block mb-1">Take Profit</span><span className="text-[var(--mostar-success)]">{selectedSignal.take_profit ? safeFixed(selectedSignal.take_profit, 4) : '—'}</span></div>
-                <div className="rounded-lg bg-white/5 p-2"><span className="text-[9px] font-black uppercase tracking-[0.2em] text-zinc-500 block mb-1">Stop Loss</span><span className="text-[#FF8585]">{selectedSignal.stop_loss ? safeFixed(selectedSignal.stop_loss, 4) : '—'}</span></div>
-              </div>
-            )}
-          </Panel>
-          
-          <Panel className="flex-1 flex flex-col min-h-0" title="Execution Terminal" icon="terminal">
-            <div className="flex-1 flex flex-col justify-between overflow-y-auto pr-2">
-              
-              {/* Exchanges Fan-out Grid */}
-              <div className="grid grid-cols-2 gap-3 mb-4">
-                {EXCHANGES.map(ex => (
-                  <div key={ex.id} className="flex flex-col justify-between rounded-xl border border-white/10 bg-black/30 p-3 h-24">
-                    <div className="flex justify-between items-start">
-                      <span className="font-bold text-xs text-white">{ex.name}</span>
-                      <Icon name="activity" size={12} className="text-zinc-600" />
-                    </div>
-                    <div>
-                      <div className="text-[9px] font-black uppercase tracking-[0.2em] text-zinc-500">{ex.type}</div>
-                      <div className="mt-1 text-[10px] font-mono font-black uppercase text-[var(--mostar-success)]">{ex.mode}</div>
-                    </div>
-                  </div>
-                ))}
+          <Panel className="flex-1 flex flex-col min-h-0" title="Trading Panel" subtitle="Signal-filled order ticket" icon="terminal">
+            <div className="flex-1 overflow-y-auto pr-2">
+              <div className="mb-4 grid grid-cols-4 gap-1 rounded-xl border border-white/10 bg-black/30 p-1">
+                {EXCHANGES.map(ex => {
+                  const active = ex.id === activeExchange.id;
+                  return (
+                    <button
+                      key={ex.id}
+                      type="button"
+                      onClick={() => setSelectedVenue(ex.id)}
+                      className={cx(
+                        'min-h-10 rounded-lg px-2 text-[9px] font-black uppercase tracking-[0.12em] transition-colors',
+                        active
+                          ? 'bg-white/12 text-white shadow-inner'
+                          : 'text-zinc-500 hover:bg-white/6 hover:text-zinc-300'
+                      )}
+                    >
+                      {ex.name}
+                    </button>
+                  );
+                })}
               </div>
 
-              {/* Master Deploy Button */}
-              <div className="mt-auto pt-4 border-t border-white/10">
-                <button
-                  type="button"
-                  onClick={deployToAllVenues}
-                  disabled={!selectedSignal || (gateStatus !== 'OPEN' && gate?.mode !== 'LIVE_DEMO')}
-                  className={cx(
-                    "w-full rounded-xl py-4 text-xs font-black uppercase tracking-[0.2em] transition-all",
-                    !selectedSignal || (gateStatus !== 'OPEN' && gate?.mode !== 'LIVE_DEMO')
-                      ? "bg-zinc-800/50 text-zinc-600 cursor-not-allowed border border-white/5"
-                      : "bg-green-500/10 text-green-400 border border-green-500/30 hover:bg-green-500/20 shadow-[0_0_15px_rgba(34,197,94,0.1)]"
-                  )}
-                >
-                  DEPLOY TO ALL VENUES
-                </button>
-                <div className="mt-2 text-center text-[9px] font-black uppercase tracking-[0.2em] text-zinc-500">
-                  {gate?.mode === 'LIVE_DEMO' ? 'Testnet/Demo Routing Active' : 'Live Fire Execution'}
+              <div className="mb-4 flex items-center justify-between rounded-xl border border-white/10 bg-black/35 px-3 py-2">
+                <div>
+                  <div className="text-[9px] font-black uppercase tracking-[0.18em] text-zinc-500">{activeExchange.type}</div>
+                  <div className="mt-0.5 text-xs font-black text-white">{activeExchange.name} Futures</div>
+                </div>
+                <div className="rounded-md border border-[var(--mostar-success)]/25 bg-[var(--mostar-success)]/10 px-2 py-1 text-[9px] font-black uppercase tracking-[0.16em] text-[var(--mostar-success)]">
+                  {activeExchange.mode}
                 </div>
               </div>
 
+              <div className="grid grid-cols-2 gap-2">
+                <div className="col-span-2 rounded-xl border border-white/10 bg-white/[0.035] p-3">
+                  <div className="mb-2 flex items-center justify-between">
+                    <span className="text-[9px] font-black uppercase tracking-[0.2em] text-zinc-500">Symbol</span>
+                    <span className="font-mono text-[10px] text-zinc-500">Perpetual</span>
+                  </div>
+                  <div className="flex items-center justify-between gap-3">
+                    <span className="font-mono text-lg font-black text-white">{selectedSignal?.pair ?? 'Select Signal'}</span>
+                    <span className={cx(
+                      'rounded-md px-2 py-1 text-[10px] font-black uppercase tracking-[0.16em]',
+                      selectedSignal?.side === 'SHORT'
+                        ? 'bg-[#FF8585]/15 text-[#FF8585]'
+                        : selectedSignal?.side === 'LONG'
+                        ? 'bg-[var(--mostar-success)]/15 text-[var(--mostar-success)]'
+                        : 'bg-white/5 text-zinc-600'
+                    )}>
+                      {selectedSignal?.side ?? 'No Side'}
+                    </span>
+                  </div>
+                </div>
+
+                <div className="rounded-xl border border-white/10 bg-white/[0.035] p-3">
+                  <div className="text-[9px] font-black uppercase tracking-[0.2em] text-zinc-500">Order Type</div>
+                  <div className="mt-2 grid grid-cols-2 gap-1 rounded-lg bg-black/30 p-1">
+                    <span className="rounded-md bg-white/10 px-2 py-1.5 text-center text-[10px] font-black text-white">Market</span>
+                    <span className="px-2 py-1.5 text-center text-[10px] font-black text-zinc-600">Limit</span>
+                  </div>
+                </div>
+
+                <div className="rounded-xl border border-white/10 bg-white/[0.035] p-3">
+                  <div className="text-[9px] font-black uppercase tracking-[0.2em] text-zinc-500">Margin</div>
+                  <div className="mt-2 grid grid-cols-2 gap-1 rounded-lg bg-black/30 p-1">
+                    <span className="rounded-md bg-white/10 px-2 py-1.5 text-center text-[10px] font-black text-white">Cross</span>
+                    <span className="px-2 py-1.5 text-center text-[10px] font-black text-zinc-600">3x</span>
+                  </div>
+                </div>
+
+                <div className="rounded-xl border border-white/10 bg-white/[0.035] p-3">
+                  <div className="text-[9px] font-black uppercase tracking-[0.2em] text-zinc-500">Entry</div>
+                  <div className="mt-2 font-mono text-sm font-black text-white">{entryPrice ? safeFixed(entryPrice, 4) : 'Market'}</div>
+                </div>
+
+                <div className="rounded-xl border border-white/10 bg-white/[0.035] p-3">
+                  <div className="text-[9px] font-black uppercase tracking-[0.2em] text-zinc-500">Notional</div>
+                  <div className="mt-2 font-mono text-sm font-black text-white">{selectedSignal ? `${safeFixed(orderNotional, 2)} USDT` : '—'}</div>
+                </div>
+
+                <div className="rounded-xl border border-white/10 bg-white/[0.035] p-3">
+                  <div className="text-[9px] font-black uppercase tracking-[0.2em] text-zinc-500">Est. Qty</div>
+                  <div className="mt-2 font-mono text-sm font-black text-white">{estimatedQty ? safeFixed(estimatedQty, 4) : '—'}</div>
+                </div>
+
+                <div className="rounded-xl border border-white/10 bg-white/[0.035] p-3">
+                  <div className="text-[9px] font-black uppercase tracking-[0.2em] text-zinc-500">Signal Score</div>
+                  <div className="mt-2 font-mono text-sm font-black text-[var(--mostar-gold)]">{selectedSignal ? safeFixed(selectedSignal.score, 1) : '—'}</div>
+                </div>
+              </div>
+
+              <div className="mt-3 rounded-xl border border-white/10 bg-black/30 p-3">
+                <div className="mb-2 flex items-center justify-between text-[9px] font-black uppercase tracking-[0.18em] text-zinc-500">
+                  <span>TP / SL</span>
+                  <span>Read-only from signal</span>
+                </div>
+                <div className="grid grid-cols-2 gap-2 font-mono text-xs">
+                  <div className="rounded-lg bg-[var(--mostar-success)]/10 p-2 text-[var(--mostar-success)]">
+                    <div className="mb-1 text-[9px] font-black uppercase tracking-[0.16em] opacity-70">Take Profit</div>
+                    <div className="font-black">{targetPrice ? safeFixed(targetPrice, 4) : '—'}</div>
+                  </div>
+                  <div className="rounded-lg bg-[#FF8585]/10 p-2 text-[#FF8585]">
+                    <div className="mb-1 text-[9px] font-black uppercase tracking-[0.16em] opacity-70">Stop Loss</div>
+                    <div className="font-black">{stopPrice ? safeFixed(stopPrice, 4) : '—'}</div>
+                  </div>
+                </div>
+              </div>
+
+              <div className="mt-3 rounded-xl border border-white/10 bg-black/30 p-3">
+                <div className="grid grid-cols-3 gap-2 text-center">
+                  <div>
+                    <div className="text-[9px] font-black uppercase tracking-[0.16em] text-zinc-500">Gate</div>
+                    <div className={cx('mt-1 text-xs font-black', canDeploy ? 'text-[var(--mostar-success)]' : 'text-[#FF8585]')}>{gateStatus}</div>
+                  </div>
+                  <div>
+                    <div className="text-[9px] font-black uppercase tracking-[0.16em] text-zinc-500">Route</div>
+                    <div className="mt-1 text-xs font-black text-white">{activeExchange.name}</div>
+                  </div>
+                  <div>
+                    <div className="text-[9px] font-black uppercase tracking-[0.16em] text-zinc-500">Mode</div>
+                    <div className="mt-1 text-xs font-black text-[var(--mostar-gold)]">{gate?.mode === 'LIVE_DEMO' ? 'Demo' : 'Live'}</div>
+                  </div>
+                </div>
+              </div>
+
+              <div className="mt-4 space-y-2 border-t border-white/10 pt-4">
+                <button
+                  type="button"
+                  onClick={() => void deployToVenue(activeExchange.id)}
+                  disabled={!canDeploy}
+                  className={cx(
+                    'w-full rounded-xl py-3 text-xs font-black uppercase tracking-[0.18em] transition-all',
+                    canDeploy
+                      ? selectedSignal?.side === 'SHORT'
+                        ? 'border border-[#FF8585]/35 bg-[#FF8585]/12 text-[#FF8585] hover:bg-[#FF8585]/18'
+                        : 'border border-[var(--mostar-success)]/35 bg-[var(--mostar-success)]/12 text-[var(--mostar-success)] hover:bg-[var(--mostar-success)]/18'
+                      : 'cursor-not-allowed border border-white/5 bg-zinc-800/50 text-zinc-600'
+                  )}
+                >
+                  {selectedSignal ? `${selectedSignal.side} ${activeExchange.name}` : 'Select Signal'}
+                </button>
+                <button
+                  type="button"
+                  onClick={deployToAllVenues}
+                  disabled={!canDeploy}
+                  className={cx(
+                    'w-full rounded-xl border py-3 text-[10px] font-black uppercase tracking-[0.18em] transition-colors',
+                    canDeploy
+                      ? 'border-white/15 bg-white/[0.035] text-zinc-300 hover:bg-white/[0.06]'
+                      : 'cursor-not-allowed border-white/5 bg-transparent text-zinc-700'
+                  )}
+                >
+                  Fan Out All Venues
+                </button>
+              </div>
             </div>
           </Panel>
         </div>

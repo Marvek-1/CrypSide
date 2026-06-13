@@ -9,9 +9,10 @@ import psycopg2
 import psycopg2.extras
 from dotenv import load_dotenv
 from fastapi import FastAPI, Query
-from quant_core.confidence_gate import calculate_confidence_gate
 
 load_dotenv()
+
+from quant_core.confidence_gate import calculate_confidence_gate
 
 DATABASE_URL = os.environ["DATABASE_URL"]
 PM2_SCANNER_NAME = os.environ.get("PM2_SCANNER_NAME", "crypside-scanner")

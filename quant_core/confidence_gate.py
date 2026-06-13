@@ -17,11 +17,70 @@ GATE_MIN_PF = float(os.getenv("GATE_MIN_PF", "1.30"))
 GATE_CONFIDENCE = 0.95
 
 
+def _zero_metrics() -> dict:
+    return {
+        "signal_count": 0,
+        "win_rate": 0.0,
+        "profit_factor": 0.0,
+        "confidence": 0.0,
+        "signals_remaining": GATE_MIN_SIGNALS,
+        "pf_gap": round(GATE_MIN_PF, 4),
+        "qseal": "🜃∴🜂",
+    }
+
+
+def _missing_paper_order_metrics() -> dict:
+    return {
+        **_zero_metrics(),
+        "gate_data_source": "missing_paper_orders",
+        "gate_warning": "paper_orders table is not provisioned; real execution gate is locked.",
+    }
+
+
 def calculate_confidence_gate(conn) -> dict:
     """
     Reads resolved paper orders and evaluates gate conditions.
     """
     with conn.cursor() as cur:
+        cur.execute("SELECT to_regclass('public.paper_orders')")
+        if cur.fetchone()[0] is None:
+            metrics = _missing_paper_order_metrics()
+            real_gate_open = False
+            if LIVE_DEMO_MODE:
+                return {
+                    "gate_status": "OPEN",
+                    "mode": "LIVE_DEMO",
+                    "real_execution_allowed": False,
+                    "demo_execution_allowed": True,
+                    "verdict": "Gate OPEN (Live Demo Mode). Real gate locked until paper_orders is provisioned.",
+                    "mo_lingua": "🜄GATE:OPEN|🜂LIVE:DEMO_MANUAL_AUTHORIZED|🜃VAULT:SIM_READY",
+                    "real_gate_open": real_gate_open,
+                    "requirements": {
+                        "min_signals": GATE_MIN_SIGNALS,
+                        "min_pf": GATE_MIN_PF,
+                        "current_signals": 0,
+                        "current_pf": 0.0,
+                    },
+                    **metrics,
+                }
+
+            return {
+                "gate_status": "LOCKED",
+                "mode": "PRODUCTION",
+                "real_execution_allowed": False,
+                "demo_execution_allowed": False,
+                "verdict": "Gate LOCKED. paper_orders table is not provisioned.",
+                "mo_lingua": "🜄GATE:LOCKED|⛔LIVE:BLOCKED|🜃VAULT:MISSING_PAPER_ORDERS",
+                "real_gate_open": real_gate_open,
+                "requirements": {
+                    "min_signals": GATE_MIN_SIGNALS,
+                    "min_pf": GATE_MIN_PF,
+                    "current_signals": 0,
+                    "current_pf": 0.0,
+                },
+                **metrics,
+            }
+
         cur.execute(
             """
             SELECT
