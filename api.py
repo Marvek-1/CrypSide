@@ -3,7 +3,6 @@ import json
 import os
 import subprocess
 import time
-from typing import Optional
 
 import psycopg2
 import psycopg2.extras
@@ -21,6 +20,42 @@ CONFIG_VERSION = os.environ.get("CONFIG_VERSION", "v1.5-quant-alpha")
 START_TS = time.time()
 
 app = FastAPI(title="CrypSide API", version="v1")
+
+import logging
+logger = logging.getLogger("crypside.api")
+
+@app.on_event("startup")
+def startup_assertions():
+    """Verify critical schema dependencies before accepting traffic. Aborts startup on failure."""
+    try:
+        with db_conn() as conn, conn.cursor() as cur:
+            cur.execute("SELECT to_regclass('public.paper_orders')")
+            if not cur.fetchone()[0]:
+                raise RuntimeError("paper_orders table is MISSING — execution paths are compromised")
+
+            cur.execute("""
+                SELECT column_name
+                FROM information_schema.columns
+                WHERE table_name='paper_orders'
+            """)
+            columns = [row[0] for row in cur.fetchall()]
+            required = ['intent_id', 'outcome', 'regime_version']
+            missing = [col for col in required if col not in columns]
+
+            if missing:
+                raise RuntimeError(f"paper_orders missing required columns: {missing}")
+
+        logger.info("Startup Assertion Passed: paper_orders schema verified.")
+        print("Startup Assertion Passed: paper_orders schema verified.")
+    except RuntimeError as e:
+        logger.critical(f"CRITICAL ALARM: {e}. Aborting startup.")
+        print(f"CRITICAL ALARM: {e}. Aborting startup.")
+        raise
+    except Exception as e:
+        logger.critical(f"CRITICAL: startup assertion check failed: {e}. Aborting startup.")
+        print(f"CRITICAL: startup assertion check failed: {e}. Aborting startup.")
+        raise RuntimeError(f"startup assertion check failed: {e}") from e
+
 
 
 def db_conn():

@@ -201,7 +201,9 @@ export default function LiveTradingCockpit() {
           </div>
           <div className="h-4 w-[1px] bg-white/20" />
           <div className="flex items-center gap-2 text-zinc-400">
-            GATE: <span className="text-white">{signalsResolved}/200</span>
+            GATE: <span className={gate?.gate_data_source === 'missing_paper_orders' ? 'text-red-400' : 'text-white'}>
+              {gate?.gate_data_source === 'missing_paper_orders' ? '0/200' : `${signalsResolved}/200`}
+            </span>
           </div>
           <div className="hidden h-4 w-[1px] bg-white/20 xl:block" />
           <div className="hidden items-center gap-2 text-zinc-400 xl:flex">
@@ -212,6 +214,16 @@ export default function LiveTradingCockpit() {
           {lastRefresh}
         </div>
       </motion.header>
+
+      {/* Missing Data Source Warning */}
+      {gate?.gate_data_source === 'missing_paper_orders' && (
+        <motion.div 
+          initial={{ opacity: 0, y: -5 }} animate={{ opacity: 1, y: 0 }}
+          className="flex-none mb-4 rounded-xl border border-red-500/50 bg-red-500/20 px-4 py-3 text-red-200 text-xs font-bold text-center tracking-wide"
+        >
+          🚨 DATABASE DISCONNECT: {gate.gate_warning || "paper_orders table is not provisioned. Execution metrics are suppressed."}
+        </motion.div>
+      )}
 
       {/* 3-Column Terminal Architecture */}
       <main className="flex-1 grid grid-cols-1 md:grid-cols-12 gap-4 min-h-0">
