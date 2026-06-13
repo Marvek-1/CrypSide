@@ -7,6 +7,9 @@ import { AppShell, Icon, Metric, Panel, cx, fmt, pct, safeFixed } from '../compo
 type GateData = {
   gate_status: string;
   signal_count: number;
+  wins: number;
+  losses: number;
+  expired: number;
   win_rate: number;
   profit_factor: number;
   confidence: number;
@@ -16,15 +19,8 @@ type GateData = {
   mo_lingua: string;
   qseal: string;
   mode?: string;
-};
-
-type StatsData = {
-  total_signals: number;
-  wins: number;
-  losses: number;
-  win_rate: number;
-  profit_factor: number;
-  signals_remaining?: number;
+  gate_data_source?: string;
+  gate_warning?: string;
 };
 
 type Signal = {
@@ -73,7 +69,6 @@ function GateRing({ gateStatus, pct: gPct }: { gateStatus: string; pct: number }
 
 export default function LiveTradingCockpit() {
   const [gate, setGate] = useState<GateData | null>(null);
-  const [stats, setStats] = useState<StatsData | null>(null);
   const [signals, setSignals] = useState<Signal[]>([]);
   const [selectedSignal, setSelectedSignal] = useState<Signal | null>(null);
   const [selectedVenue, setSelectedVenue] = useState(EXCHANGES[0].id);
@@ -82,18 +77,13 @@ export default function LiveTradingCockpit() {
   useEffect(() => {
     const load = async () => {
       try {
-        const [gateRes, statsRes, sigRes] = await Promise.all([
+        const [gateRes, sigRes] = await Promise.all([
           fetch('/api/python/confidence-gate', { cache: 'no-store' }),
-          fetch('/api/python/stats', { cache: 'no-store' }),
           fetch('/api/python/signals?limit=50', { cache: 'no-store' }),
         ]);
         if (gateRes.ok) {
           const g = await gateRes.json();
           if (g.data_source !== 'error') setGate(g);
-        }
-        if (statsRes.ok) {
-          const s = await statsRes.json();
-          setStats(s);
         }
         if (sigRes.ok) {
           const s = await sigRes.json();
@@ -109,9 +99,8 @@ export default function LiveTradingCockpit() {
     return () => clearInterval(t);
   }, []);
 
-  const gatePct = gate
-    ? Math.min((gate.signal_count / Math.max(200 - gate.signals_remaining + gate.signal_count, 200)) * 100, 100)
-    : 0;
+  const gateTotal = gate ? gate.signal_count + gate.signals_remaining : 200;
+  const gatePct = gate ? Math.min((gate.signal_count / gateTotal) * 100, 100) : 0;
   const gateStatus = gate?.gate_status ?? 'LOCKED';
   const signalsResolved = gate?.signal_count ?? 0;
   
@@ -261,29 +250,33 @@ export default function LiveTradingCockpit() {
 
           <Panel className="flex-1 flex flex-col min-h-0" title="Paper Performance">
             <div className="flex-1 overflow-y-auto pr-2">
-              {!stats ? (
+              {!gate ? (
                 <div className="text-xs text-zinc-500">Loading...</div>
               ) : (
                 <div className="space-y-2">
                   <div className="flex justify-between items-center rounded-lg bg-white/5 p-3">
-                    <span className="text-[10px] font-black uppercase tracking-[0.2em] text-zinc-400">Total Signals</span>
-                    <span className="font-mono text-xs font-bold text-white">{fmt(stats.total_signals)}</span>
+                    <span className="text-[10px] font-black uppercase tracking-[0.2em] text-zinc-400">Resolved</span>
+                    <span className="font-mono text-xs font-bold text-white">{fmt(gate.signal_count)}</span>
                   </div>
                   <div className="flex justify-between items-center rounded-lg bg-white/5 p-3">
                     <span className="text-[10px] font-black uppercase tracking-[0.2em] text-zinc-400">Wins</span>
-                    <span className="font-mono text-xs font-bold text-[var(--mostar-success)]">{fmt(stats.wins)}</span>
+                    <span className="font-mono text-xs font-bold text-[var(--mostar-success)]">{fmt(gate.wins ?? 0)}</span>
                   </div>
                   <div className="flex justify-between items-center rounded-lg bg-white/5 p-3">
                     <span className="text-[10px] font-black uppercase tracking-[0.2em] text-zinc-400">Losses</span>
-                    <span className="font-mono text-xs font-bold text-[#FF8585]">{fmt(stats.losses)}</span>
+                    <span className="font-mono text-xs font-bold text-[#FF8585]">{fmt(gate.losses ?? 0)}</span>
+                  </div>
+                  <div className="flex justify-between items-center rounded-lg bg-white/5 p-3">
+                    <span className="text-[10px] font-black uppercase tracking-[0.2em] text-zinc-400">Expired</span>
+                    <span className="font-mono text-xs font-bold text-zinc-400">{fmt(gate.expired ?? 0)}</span>
                   </div>
                   <div className="flex justify-between items-center rounded-lg bg-white/5 p-3">
                     <span className="text-[10px] font-black uppercase tracking-[0.2em] text-zinc-400">Win Rate</span>
-                    <span className="font-mono text-xs font-bold text-[var(--mostar-gold)]">{safeFixed(stats.win_rate)}%</span>
+                    <span className="font-mono text-xs font-bold text-[var(--mostar-gold)]">{safeFixed(gate.win_rate)}%</span>
                   </div>
                   <div className="flex justify-between items-center rounded-lg bg-white/5 p-3">
                     <span className="text-[10px] font-black uppercase tracking-[0.2em] text-zinc-400">Profit Factor</span>
-                    <span className={cx('font-mono text-xs font-bold', stats.profit_factor >= 1.3 ? 'text-[var(--mostar-success)]' : 'text-[#FF8585]')}>{safeFixed(stats.profit_factor)}</span>
+                    <span className={cx('font-mono text-xs font-bold', gate.profit_factor >= 1.3 ? 'text-[var(--mostar-success)]' : 'text-[#FF8585]')}>{safeFixed(gate.profit_factor)}</span>
                   </div>
                 </div>
               )}

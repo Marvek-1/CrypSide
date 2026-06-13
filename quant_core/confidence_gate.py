@@ -20,6 +20,9 @@ GATE_CONFIDENCE = 0.95
 def _zero_metrics() -> dict:
     return {
         "signal_count": 0,
+        "wins": 0,
+        "losses": 0,
+        "expired": 0,
         "win_rate": 0.0,
         "profit_factor": 0.0,
         "confidence": 0.0,
@@ -143,9 +146,12 @@ def calculate_confidence_gate(conn) -> dict:
 
     metrics = {
         "signal_count": total,
-        "win_rate": round(win_rate, 4),
+        "wins": wins,
+        "losses": losses,
+        "expired": expired,
+        "win_rate": round(win_rate * 100, 2),
         "profit_factor": round(profit_factor, 4),
-        "confidence": round(confidence, 4),
+        "confidence": round(confidence * 100, 2),
         "signals_remaining": signals_remaining,
         "pf_gap": pf_gap,
         "qseal": "🜃∴🜂",

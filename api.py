@@ -362,3 +362,27 @@ def get_confidence_gate():
     gate = calculate_confidence_gate(conn)
     conn.close()
     return gate
+
+
+@app.get("/api/v1/paper-orders")
+def get_paper_orders(limit: int = Query(50, ge=1, le=200)):
+    """Returns recent paper orders for the execution ledger."""
+    with (
+        db_conn() as conn,
+        conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur,
+    ):
+        cur.execute(
+            """
+            SELECT
+                order_id, asset, side, entry, exit_price,
+                outcome, r_multiple, status, fill_mode,
+                regime_version, confidence_gate_eligible, reconstructed,
+                research_only, fill_time, resolved_at, created_at
+            FROM paper_orders
+            ORDER BY created_at DESC
+            LIMIT %s
+            """,
+            (limit,),
+        )
+        rows = cur.fetchall()
+    return {"count": len(rows), "orders": rows}
