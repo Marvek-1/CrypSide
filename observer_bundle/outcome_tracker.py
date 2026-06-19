@@ -4,10 +4,9 @@ import argparse
 import json
 import os
 import time
-import threading
 import html
 import logging
-from datetime import timezone
+from datetime import datetime, timezone, timedelta
 
 import pandas as pd
 import psycopg2
@@ -20,8 +19,6 @@ from telegram_alerts import send_telegram_async
 load_dotenv()
 
 import config
-from risk_policy import TP1_R, TP2_R, SL_R, BREAKEVEN_BUFFER
-from datetime import datetime, timezone, timedelta
 
 logger = logging.getLogger(__name__)
 DATABASE_URL = os.environ["DATABASE_URL"]
@@ -112,63 +109,18 @@ def log_event(level: str, component: str, event: str, details: dict):
         conn.commit()
 
 
-def sync_training_candidate_outcome(signal_row: dict, outcome: str, r_mult: float, updates_meta: dict | None) -> int:
-    outcome_label = "NEUTRAL" if outcome == "EXPIRED" else outcome
-    meta = updates_meta or {}
-    pnl_pct = meta.get("pnl_pct")
-    mae = meta.get("adverse_excursion")
-    horizon_bars = max(int((datetime.now(timezone.utc) - signal_row["ts"]).total_seconds() // 900), 0)
-
-    with db_conn() as conn, conn.cursor() as cur:
-        cur.execute(
-            """
-            UPDATE training_candidates
-            SET outcome_label = %s,
-                outcome_pct = %s,
-                mae_pct = %s,
-                horizon_bars = %s,
-                trace_data = COALESCE(trace_data, '{}'::jsonb) || %s::jsonb
-            WHERE id = (
-                SELECT id
-                FROM training_candidates
-                WHERE symbol = %s
-                  AND side = %s
-                  AND rejection_gate IS NULL
-                  AND outcome_label IS NULL
-                  AND ts BETWEEN %s - INTERVAL '30 minutes' AND %s + INTERVAL '30 minutes'
-                ORDER BY ABS(EXTRACT(EPOCH FROM (ts - %s))) ASC
-                LIMIT 1
-            )
-            """,
-            (
-                outcome_label,
-                pnl_pct,
-                mae,
-                horizon_bars,
-                json.dumps({"realized_r": r_mult, "signal_id": str(signal_row["signal_id"])}),
-                signal_row["pair"],
-                signal_row["side"],
-                signal_row["ts"],
-                signal_row["ts"],
-                signal_row["ts"],
-            ),
-        )
-        conn.commit()
-        return cur.rowcount
-
-
 def fetch_since(symbol: str, start_ms: int, interval: str = "15m", limit: int = 1000):
     # Determine if it's a futures pair (usually ends in USDT or has a specific format)
     # For Binance, futures klines are at /fapi/v1/klines
     is_futures = "USDT" in symbol # Simple heuristic
-    
+
     if is_futures:
         base_url = "https://fapi.binance.com"
         endpoint = "/fapi/v1/klines"
     else:
         base_url = "https://api.binance.com"
         endpoint = "/api/v3/klines"
-        
+
     url = f"{base_url}{endpoint}"
     params = {"symbol": symbol, "interval": interval, "startTime": start_ms, "limit": limit}
     r = requests.get(url, params=params, timeout=20)
@@ -195,12 +147,17 @@ def resolve_signal(sig: dict) -> tuple[str | None, float | None, dict | None]:
     side = sig["side"]
     entry = float(sig["entry"])
 
-    # Single TP target — tp1 from reason_trace (surgical exit mode: 2.0R)
+    # Scale-out targets from reason_trace
     trace = sig.get("reason_trace", {})
     tp1 = float(trace.get("tp1", sig["take_profit"]))
-    current_sl = float(sig["stop_loss"])
+    tp2 = float(trace.get("tp2", sig["take_profit"]))
 
-    # Adverse Excursion Tracking (MAE)
+    # State from DB
+    is_partial = sig.get("is_partial", False)
+    trailing_sl = sig.get("trailing_sl")
+    current_sl = float(trailing_sl) if trailing_sl is not None else float(sig["stop_loss"])
+
+    # Adverse Excursion Tracking (MAE) in R-multiples
     max_adv_r = float(sig.get("adverse_excursion") or 0.0)
     initial_sl = float(sig["stop_loss"])
     r_dist = abs(entry - initial_sl) if abs(entry - initial_sl) > 0 else 1e-8
@@ -216,26 +173,44 @@ def resolve_signal(sig: dict) -> tuple[str | None, float | None, dict | None]:
     for _, row in df.iterrows():
         high, low = float(row["high"]), float(row["low"])
 
+        # Track maximum adverse excursion in R-multiples
         current_adv_r = (entry - low) / r_dist if side == "LONG" else (high - entry) / r_dist
         max_adv_r = max(max_adv_r, current_adv_r)
 
         if side == "LONG":
+            # 1. Check for Stop Loss / Breakeven
             if low <= current_sl:
-                return "LOSS", -SL_R, _meta(exit_price=current_sl)
-            if high >= tp1:
-                return "WIN", TP1_R, _meta(exit_price=tp1)
-        else:
-            if high >= current_sl:
-                return "LOSS", -SL_R, _meta(exit_price=current_sl)
-            if low <= tp1:
-                return "WIN", TP1_R, _meta(exit_price=tp1)
+                if is_partial:
+                    return "WIN", 0.6, _meta(exit_price=current_sl)
+                return "LOSS", -1.0, _meta(exit_price=current_sl)
 
+            # 2. Check for Scale-out (TP1)
+            if not is_partial and high >= tp1:
+                return "HIT_TP1", 0.6, _meta(exit_price=tp1, is_partial=True, trailing_sl=entry)
+
+            # 3. Check for Final Target (TP2)
+            if high >= tp2:
+                return "WIN", 2.1, _meta(exit_price=tp2)
+
+        else:  # SHORT
+            if high >= current_sl:
+                if is_partial:
+                    return "WIN", 0.6, _meta(exit_price=current_sl)
+                return "LOSS", -1.0, _meta(exit_price=current_sl)
+
+            if not is_partial and low <= tp1:
+                return "HIT_TP1", 0.6, _meta(exit_price=tp1, is_partial=True, trailing_sl=entry)
+
+            if low <= tp2:
+                return "WIN", 2.1, _meta(exit_price=tp2)
+
+    # FIXED: was the undefined name `max_adv_pct` (NameError on every "still open" signal)
     return None, None, {"adverse_excursion": max_adv_r}
 
 
 def run_once():
     expiry_threshold = datetime.now(timezone.utc) - timedelta(days=SIGNAL_EXPIRY_DAYS)
-    
+
     with db_conn() as conn, conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
         cur.execute(
             """
@@ -251,16 +226,16 @@ def run_once():
     updates = 0
     expired = 0
     errors = 0
-    
+
     for row in rows:
         try:
             # 1. Define sig_ts correctly
             sig_ts = row["ts"]
             if sig_ts.tzinfo is None:
                 sig_ts = sig_ts.replace(tzinfo=timezone.utc)
-            
+
             outcome, r_mult, updates_meta = None, None, None
-            
+
             # 2. Check for absolute expiry ONLY for live execution. Simulated rows must process history.
             is_live = row.get("execution_source") == "live"
             if is_live and sig_ts < expiry_threshold:
@@ -272,14 +247,33 @@ def run_once():
                 }
                 expired += 1
             else:
+                # 3. Resolve using new Scale-out / Breakeven logic
                 outcome, r_mult, updates_meta = resolve_signal(row)
-            
-            if outcome is not None:
+
+            if outcome == "HIT_TP1" and updates_meta is not None:
+                # Persist partial state and MAE but keep outcome NULL to continue tracking for TP2
+                with db_conn() as conn, conn.cursor() as cur:
+                    cur.execute(
+                        """
+                        UPDATE signals
+                        SET is_partial = TRUE, trailing_sl = %s, adverse_excursion = %s, updated_at = NOW()
+                        WHERE id = %s
+                        """,
+                        (updates_meta.get("trailing_sl"), updates_meta.get("adverse_excursion"), row["id"]),
+                    )
+                    conn.commit()
+                log_event("INFO", "outcome_tracker", "scale_out_hit", {"signal_id": row["signal_id"], "pair": row["pair"]})
+
+                # Send Telegram alert for scale-out
+                _send_scale_out_alert(row, updates_meta)
+            elif outcome is not None:
                 # Final resolution: WIN or LOSS. Scaled-out winners remain WIN with a smaller R multiple.
                 meta = updates_meta or {}
                 exit_price = meta.get("exit_price") or row["entry"]
                 trace = row.get("reason_trace") or {}
                 with db_conn() as conn, conn.cursor() as cur:
+                    # FIXED: explicitly clear is_partial on terminal resolution so the
+                    # chk_partial_consistency constraint can never reject this UPDATE
                     cur.execute(
                         """
                         UPDATE signals
@@ -289,23 +283,28 @@ def run_once():
                         """,
                         (outcome, r_mult, meta.get("adverse_excursion"), row["id"]),
                     )
-                    # Mirror to paper_orders so the confidence gate and virtual account see it
+
+                    # FIXED: mirror to paper_orders so the confidence gate, virtual
+                    # account, and training pipeline see resolved trades. signal_id
+                    # and intent_id are NOT NULL with no default on this table;
+                    # intent_id has no FK constraint so a synthetic uuid is safe here
+                    # since there's no real execution_intents row to reference.
                     cur.execute(
                         """
                         INSERT INTO paper_orders (
-                            order_id, asset, side, entry, exit_price,
+                            order_id, signal_id, intent_id, asset, side, entry, exit_price,
                             outcome, r_multiple, status, fill_mode, regime_version,
                             confidence_gate_eligible, reconstructed, research_only,
                             fill_time, resolved_at, created_at
                         ) VALUES (
-                            gen_random_uuid(), %s, %s, %s, %s,
+                            gen_random_uuid(), %s, gen_random_uuid(), %s, %s, %s, %s,
                             %s, %s, 'CLOSED', 'paper', %s,
                             TRUE, FALSE, FALSE,
                             %s, NOW(), NOW()
                         ) ON CONFLICT DO NOTHING
                         """,
                         (
-                            row["pair"], row["side"], float(row["entry"]), float(exit_price),
+                            row["signal_id"], row["pair"], row["side"], float(row["entry"]), float(exit_price),
                             outcome, float(r_mult),
                             str(trace.get("market_regime", "paper")),
                             row["ts"],
@@ -313,15 +312,7 @@ def run_once():
                     )
                     conn.commit()
                 updates += 1
-                synced = sync_training_candidate_outcome(row, outcome, r_mult, updates_meta)
-                if synced == 0:
-                    log_event("WARNING", "outcome_tracker", "training_candidate_sync_miss", {
-                        "signal_id": row["signal_id"],
-                        "pair": row["pair"],
-                        "side": row["side"],
-                        "outcome": outcome,
-                    })
-                
+
                 # Send Telegram alert for outcome
                 _send_outcome_alert(row, outcome, r_mult, updates_meta)
             else:
@@ -339,14 +330,13 @@ def run_once():
             log_event("ERROR", "outcome_tracker", "per_signal_error", {"signal_id": row["signal_id"], "error": str(e)})
 
     log_event("INFO", "outcome_tracker", "tracker_run_complete", {
-        "checked": len(rows), 
-        "updated": updates, 
+        "checked": len(rows),
+        "updated": updates,
         "expired": expired,
         "errors": errors
     })
 
 
-import logging
 from logging.handlers import RotatingFileHandler
 
 # Log configuration
