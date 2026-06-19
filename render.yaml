@@ -1,0 +1,143 @@
+services:
+  # --- API (FastAPI) ---
+  - type: web
+    name: crypside-api
+    runtime: python
+    rootDir: .
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn api:app --host 0.0.0.0 --port $PORT
+    plan: starter
+    envVars:
+      - key: PYTHONUNBUFFERED
+        value: "1"
+      - key: DATABASE_URL
+        sync: false
+      - key: IDIM_DATABASE_URL
+        sync: false
+      - key: IDIM_API_URL
+        sync: false
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: TELEGRAM_CHAT_ID
+        sync: false
+      - key: BINANCE_BASE_URL
+        value: https://api.binance.com
+      - key: BINANCE_API_KEY
+        sync: false
+      - key: BINANCE_API_SECRET
+        sync: false
+      - key: TRADING_MODE
+        value: paper
+      - key: ALLOW_AUTO_EXECUTION
+        value: "false"
+
+  # --- Frontend (Next.js) ---
+  - type: web
+    name: crypside-frontend
+    runtime: node
+    rootDir: .
+    buildCommand: npm install && npm run build
+    startCommand: npm run start -- -p $PORT
+    plan: starter
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: NEXT_PUBLIC_API_BASE_URL
+        sync: false
+      - key: NEXT_PUBLIC_API_WS_URL
+        sync: false
+      - key: NEXT_PUBLIC_IDIM_API_URL
+        sync: false
+
+  # --- Scanner (background worker) ---
+  - type: worker
+    name: crypside-scanner
+    runtime: python
+    rootDir: observer_bundle
+    buildCommand: pip install -r ../requirements.txt
+    startCommand: python scanner.py
+    plan: starter
+    envVars:
+      - key: PYTHONUNBUFFERED
+        value: "1"
+      - key: DATABASE_URL
+        sync: false
+      - key: BINANCE_BASE_URL
+        value: https://api.binance.com
+      - key: SCAN_INTERVAL_SECONDS
+        value: "300"
+      - key: LOOKBACK_15M
+        value: "500"
+      - key: LOOKBACK_4H
+        value: "300"
+      - key: LOGIC_VERSION
+        value: v1.5-quant-alpha
+      - key: CONFIG_VERSION
+        value: v1.5-quant-alpha
+
+  # --- Outcome tracker (background worker) ---
+  # NOTE: as of this config, this file (observer_bundle/outcome_tracker.py) is NOT
+  # the version with the is_partial fix verified working — confirm Phase 2 bug fix
+  # lands before relying on this in production.
+  - type: worker
+    name: crypside-outcome-tracker
+    runtime: python
+    rootDir: observer_bundle
+    buildCommand: pip install -r ../requirements.txt
+    startCommand: python outcome_tracker.py --loop
+    plan: starter
+    envVars:
+      - key: PYTHONUNBUFFERED
+        value: "1"
+      - key: DATABASE_URL
+        sync: false
+      - key: BINANCE_BASE_URL
+        value: https://api.binance.com
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: TELEGRAM_CHAT_ID
+        sync: false
+      - key: SIGNAL_EXPIRY_DAYS
+        value: "3"
+
+  # --- Funding rate collector ---
+  - type: worker
+    name: crypside-funding-collector
+    runtime: python
+    rootDir: observer_bundle
+    buildCommand: pip install -r ../requirements.txt
+    startCommand: python funding_collector.py
+    plan: starter
+    envVars:
+      - key: PYTHONUNBUFFERED
+        value: "1"
+      - key: DATABASE_URL
+        sync: false
+
+  # --- Open interest collector ---
+  - type: worker
+    name: crypside-oi-collector
+    runtime: python
+    rootDir: observer_bundle
+    buildCommand: pip install -r ../requirements.txt
+    startCommand: python oi_collector.py
+    plan: starter
+    envVars:
+      - key: PYTHONUNBUFFERED
+        value: "1"
+      - key: DATABASE_URL
+        sync: false
+
+  # --- Long/short ratio collector ---
+  - type: worker
+    name: crypside-ls-ratio-collector
+    runtime: python
+    rootDir: observer_bundle
+    buildCommand: pip install -r ../requirements.txt
+    startCommand: python ls_ratio_collector.py
+    plan: starter
+    envVars:
+      - key: PYTHONUNBUFFERED
+        value: "1"
+      - key: DATABASE_URL
+        sync: false

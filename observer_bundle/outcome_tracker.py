@@ -276,14 +276,40 @@ def run_once():
             
             if outcome is not None:
                 # Final resolution: WIN or LOSS. Scaled-out winners remain WIN with a smaller R multiple.
+                meta = updates_meta or {}
+                exit_price = meta.get("exit_price") or row["entry"]
+                trace = row.get("reason_trace") or {}
                 with db_conn() as conn, conn.cursor() as cur:
                     cur.execute(
                         """
                         UPDATE signals
-                        SET outcome = %s, r_multiple = %s, adverse_excursion = %s, updated_at = NOW()
+                        SET outcome = %s, r_multiple = %s, adverse_excursion = %s,
+                            is_partial = FALSE, updated_at = NOW()
                         WHERE id = %s
                         """,
-                        (outcome, r_mult, updates_meta["adverse_excursion"] if updates_meta is not None else None, row["id"]),
+                        (outcome, r_mult, meta.get("adverse_excursion"), row["id"]),
+                    )
+                    # Mirror to paper_orders so the confidence gate and virtual account see it
+                    cur.execute(
+                        """
+                        INSERT INTO paper_orders (
+                            order_id, asset, side, entry, exit_price,
+                            outcome, r_multiple, status, fill_mode, regime_version,
+                            confidence_gate_eligible, reconstructed, research_only,
+                            fill_time, resolved_at, created_at
+                        ) VALUES (
+                            gen_random_uuid(), %s, %s, %s, %s,
+                            %s, %s, 'CLOSED', 'paper', %s,
+                            TRUE, FALSE, FALSE,
+                            %s, NOW(), NOW()
+                        ) ON CONFLICT DO NOTHING
+                        """,
+                        (
+                            row["pair"], row["side"], float(row["entry"]), float(exit_price),
+                            outcome, float(r_mult),
+                            str(trace.get("market_regime", "paper")),
+                            row["ts"],
+                        ),
                     )
                     conn.commit()
                 updates += 1

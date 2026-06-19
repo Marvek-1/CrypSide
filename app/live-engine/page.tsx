@@ -13,6 +13,14 @@ type Signal = {
   outcome?: string; r_multiple?: number;
 };
 type Stats = { total_signals: number; win_rate: number; profit_factor: number; signals_per_day: number };
+type LastScan = {
+  ts: string; event: string;
+  details: {
+    pairs_processed: number; signals_emitted: number; v15_gate_blocked: number;
+    duration: number; errors: number; setups_viable_pre_phase2: number; setups_blocked_phase2: number;
+  };
+};
+type LastSignalStatus = { ts: string; pair: string; side: string; score: number; regime: string };
 
 function outcomeTone(outcome?: string) {
   if (!outcome) return 'mostar-text-muted';
@@ -78,6 +86,9 @@ function ExecutionCore({ status, signalCount }: { status: string; signalCount: n
 
 export default function LiveExecutionTerminal() {
   const [statusText, setStatusText] = useState('loading');
+  const [uptime, setUptime] = useState<number | null>(null);
+  const [lastScan, setLastScan] = useState<LastScan | null>(null);
+  const [lastSignalStatus, setLastSignalStatus] = useState<LastSignalStatus | null>(null);
   const [stats, setStats] = useState<Stats>({ total_signals: 0, win_rate: 0, profit_factor: 0, signals_per_day: 0 });
   const [signals, setSignals] = useState<Signal[]>([]);
   const [lastRefresh, setLastRefresh] = useState('—');
@@ -91,7 +102,13 @@ export default function LiveExecutionTerminal() {
           fetch('/api/python/stats', { cache: 'no-store' }),
           fetch('/api/python/signals?limit=25', { cache: 'no-store' }),
         ]);
-        if (statusRes.ok) { const s = await statusRes.json(); setStatusText(String(s.scanner_state || 'unknown')); } else setStatusText('degraded');
+        if (statusRes.ok) {
+          const s = await statusRes.json();
+          setStatusText(String(s.scanner_state || 'unknown'));
+          if (s.uptime_seconds != null) setUptime(Number(s.uptime_seconds));
+          if (s.last_log) setLastScan(s.last_log as LastScan);
+          if (s.last_signal) setLastSignalStatus(s.last_signal as LastSignalStatus);
+        } else setStatusText('degraded');
         if (statsRes.ok) { const p = await statsRes.json(); setStats({ total_signals: Number(p.total_signals || 0), win_rate: Number(p.win_rate || 0), profit_factor: Number(p.profit_factor || 0), signals_per_day: Number(p.signals_per_day || 0) }); }
         if (signalsRes.ok) { const p = await signalsRes.json(); setSignals(Array.isArray(p.signals) ? p.signals : []); }
         setApiError(!statusRes.ok || !statsRes.ok || !signalsRes.ok);
@@ -149,6 +166,63 @@ export default function LiveExecutionTerminal() {
             <div className="mostar-card rounded-3xl p-5"><div className="mb-3 flex items-center justify-between gap-3"><div className="text-[10px] font-black uppercase tracking-[0.22em] text-[var(--mostar-muted)]">Operational Verdict</div><Icon name={verdict.icon} className={verdict.tone} size={20} /></div><div className={cx('text-2xl font-black uppercase tracking-tight', verdict.tone)}>{verdict.label}</div><p className="mt-2 text-xs leading-relaxed text-[var(--mostar-muted)]">The page does not pretend to execute. It observes live scanner data and keeps execution locked.</p></div>
             <div className="mostar-card rounded-3xl p-5"><div className="mb-3 text-[10px] font-black uppercase tracking-[0.22em] text-[var(--mostar-muted)]">Latest Signal Snapshot</div>{latest ? <div className="flex items-center justify-between gap-3"><div><div className="text-2xl font-black">{latest.pair}</div><div className="mt-1 text-xs text-[var(--mostar-muted)]">{latest.ts || latest.timestamp || 'n/a'}</div></div><span className={cx('rounded-full px-3 py-1 text-[10px] font-black uppercase', sideTone(latest.side))}>{latest.side}</span></div> : <div className="text-sm font-black uppercase tracking-[0.16em] text-[var(--mostar-muted)]">No live signal yet</div>}</div>
           </div>
+        </Panel>
+
+        <Panel className="xl:col-span-6" title="Last Scan" subtitle="Most recent scanner cycle — updates every ~8 min" icon="radar">
+          {lastScan ? (
+            <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+              {[
+                { label: 'Pairs', value: lastScan.details.pairs_processed },
+                { label: 'Emitted', value: lastScan.details.signals_emitted, tone: lastScan.details.signals_emitted > 0 ? 'text-[var(--mostar-success)]' : undefined },
+                { label: 'Gate Blocked', value: lastScan.details.v15_gate_blocked, tone: lastScan.details.v15_gate_blocked > 0 ? 'text-[var(--mostar-gold)]' : undefined },
+                { label: 'Errors', value: lastScan.details.errors, tone: lastScan.details.errors > 0 ? 'text-[#FF8585]' : undefined },
+                { label: 'Viable Pre-P2', value: lastScan.details.setups_viable_pre_phase2 },
+                { label: 'P2 Blocked', value: lastScan.details.setups_blocked_phase2 },
+                { label: 'Duration', value: `${safeFixed(lastScan.details.duration, 1)}s` },
+                { label: 'Uptime', value: uptime != null ? `${Math.floor(uptime / 60)}m` : '—' },
+              ].map(({ label, value, tone }) => (
+                <div key={label} className="rounded-xl border border-white/10 bg-white/5 p-3 text-center">
+                  <div className="text-[9px] font-black uppercase tracking-[0.2em] text-zinc-500 mb-1">{label}</div>
+                  <div className={cx('font-mono text-sm font-black text-white', tone)}>{value}</div>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="text-xs text-zinc-500">Waiting for first scan cycle...</div>
+          )}
+          {lastScan && (
+            <div className="mt-3 text-[10px] text-zinc-600 font-mono">
+              Last: {new Date(lastScan.ts).toLocaleTimeString()}
+            </div>
+          )}
+        </Panel>
+
+        <Panel className="xl:col-span-6" title="Last Signal" subtitle="Most recent signal emitted by the scanner" icon="signal">
+          {lastSignalStatus ? (
+            <div className="flex flex-col gap-3">
+              <div className="flex items-center justify-between gap-4">
+                <div>
+                  <div className="text-2xl font-black text-white">{lastSignalStatus.pair}</div>
+                  <div className="mt-1 text-[10px] text-zinc-500 font-mono">{new Date(lastSignalStatus.ts).toLocaleString()}</div>
+                </div>
+                <span className={cx('rounded-full px-4 py-2 text-[11px] font-black uppercase tracking-[0.16em]', sideTone(lastSignalStatus.side))}>
+                  {lastSignalStatus.side}
+                </span>
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                <div className="rounded-xl border border-white/10 bg-white/5 p-3 text-center">
+                  <div className="text-[9px] font-black uppercase tracking-[0.2em] text-zinc-500 mb-1">Score</div>
+                  <div className="font-mono text-sm font-black text-[var(--mostar-gold)]">{safeFixed(lastSignalStatus.score, 1)}</div>
+                </div>
+                <div className="rounded-xl border border-white/10 bg-white/5 p-3 text-center">
+                  <div className="text-[9px] font-black uppercase tracking-[0.2em] text-zinc-500 mb-1">Regime</div>
+                  <div className="font-mono text-xs font-black text-[#9DB2FF]">{lastSignalStatus.regime}</div>
+                </div>
+              </div>
+            </div>
+          ) : (
+            <div className="text-xs text-zinc-500">No signal yet in this session.</div>
+          )}
         </Panel>
 
         <Panel className="xl:col-span-12" title="Execution Ledger" subtitle="Latest paper trades and live signal intelligence — newest first" icon="scroll">

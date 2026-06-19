@@ -16,6 +16,7 @@ const navItems = [
   {href: '/observer', label: 'Observer'},
   {href: '/live-engine', label: 'Live Engine'},
   {href: '/live-trading', label: 'Live Trading'},
+  {href: '/live', label: 'Ledger'},
 ];
 
 export default function RootLayout({children}: {children: ReactNode}) {

@@ -99,9 +99,9 @@ def calculate_confidence_gate(conn) -> dict:
                     FILTER (WHERE outcome = 'LOSS' AND r_multiple < 0)), 0)
                     AS gross_loss_r
             FROM paper_orders
-            WHERE regime_version = 'v2_adx_ema_rsi'
-              AND outcome IN ('WIN','LOSS','EXPIRED')
+            WHERE outcome IN ('WIN','LOSS','EXPIRED')
               AND confidence_gate_eligible = true
+              AND reconstructed = false
         """
         )
         row = cur.fetchone()

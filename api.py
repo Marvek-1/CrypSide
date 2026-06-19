@@ -3,11 +3,14 @@ import json
 import os
 import subprocess
 import time
+from datetime import datetime, timezone
 
 import psycopg2
 import psycopg2.extras
+import requests as http_requests
 from dotenv import load_dotenv
 from fastapi import FastAPI, Query
+from fastapi.responses import JSONResponse
 
 load_dotenv()
 
@@ -362,6 +365,169 @@ def get_confidence_gate():
     gate = calculate_confidence_gate(conn)
     conn.close()
     return gate
+
+
+_VIRTUAL_START = 250_000.0
+_RISK_PER_ROW = 0.0025  # 0.25% of running balance per venue slot (= 1% per 4-venue signal)
+
+
+@app.get("/api/v1/virtual-account")
+def get_virtual_account():
+    """Computes a virtual paper-trading account balance from all resolved paper_orders."""
+    with (
+        db_conn() as conn,
+        conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur,
+    ):
+        cur.execute(
+            """
+            SELECT order_id, asset, side, outcome, r_multiple, resolved_at, created_at
+            FROM paper_orders
+            WHERE outcome IN ('WIN', 'LOSS', 'EXPIRED')
+              AND r_multiple IS NOT NULL
+              AND confidence_gate_eligible = TRUE
+              AND reconstructed = FALSE
+            ORDER BY COALESCE(resolved_at, created_at) ASC
+            """
+        )
+        rows = cur.fetchall()
+
+    balance = _VIRTUAL_START
+    equity_curve = []
+    wins = losses = expired = 0
+
+    for row in rows:
+        risk_amount = balance * _RISK_PER_ROW
+        dollar_pnl = float(row["r_multiple"]) * risk_amount
+        balance += dollar_pnl
+
+        outcome = row["outcome"]
+        if outcome == "WIN":
+            wins += 1
+        elif outcome == "LOSS":
+            losses += 1
+        else:
+            expired += 1
+
+        ts = row["resolved_at"] or row["created_at"]
+        equity_curve.append({
+            "ts": ts.isoformat() if hasattr(ts, "isoformat") else str(ts),
+            "balance": round(balance, 2),
+            "dollar_pnl": round(dollar_pnl, 2),
+            "r_multiple": float(row["r_multiple"]),
+            "outcome": outcome,
+            "pair": row["asset"],
+            "side": row["side"],
+        })
+
+    total_pnl = balance - _VIRTUAL_START
+    total_pnl_pct = (total_pnl / _VIRTUAL_START) * 100
+
+    return {
+        "start_balance": _VIRTUAL_START,
+        "current_balance": round(balance, 2),
+        "total_pnl": round(total_pnl, 2),
+        "total_pnl_pct": round(total_pnl_pct, 4),
+        "trade_count": len(rows),
+        "wins": wins,
+        "losses": losses,
+        "expired": expired,
+        "risk_model": "1pct_per_signal_compounding",
+        "equity_curve": equity_curve,
+    }
+
+
+@app.get("/api/v1/virtual-account/live-tail")
+def get_virtual_account_live_tail():
+    """Returns mark-to-market balance for all open (unresolved) signals."""
+    try:
+        with (
+            db_conn() as conn,
+            conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur,
+        ):
+            # Current resolved balance (same logic as virtual-account)
+            cur.execute(
+                """
+                SELECT r_multiple, outcome FROM paper_orders
+                WHERE outcome IN ('WIN', 'LOSS', 'EXPIRED')
+                  AND r_multiple IS NOT NULL
+                  AND confidence_gate_eligible = TRUE
+                  AND reconstructed = FALSE
+                ORDER BY COALESCE(resolved_at, created_at) ASC
+                """
+            )
+            resolved_rows = cur.fetchall()
+
+            # Open signals not yet resolved
+            cur.execute(
+                """
+                SELECT signal_id, pair, side, entry, stop_loss, take_profit, reason_trace
+                FROM signals
+                WHERE outcome IS NULL
+                ORDER BY ts DESC
+                LIMIT 30
+                """
+            )
+            open_sigs = cur.fetchall()
+
+        # Reconstruct base balance from resolved trades
+        base_balance = _VIRTUAL_START
+        for row in resolved_rows:
+            risk = base_balance * _RISK_PER_ROW
+            base_balance += float(row["r_multiple"]) * risk
+
+        # Fetch current prices in parallel via Binance fapi ticker
+        live_points = []
+        running = base_balance
+
+        for sig in open_sigs:
+            try:
+                symbol = sig["pair"].replace("/", "").replace("-", "")
+                resp = http_requests.get(
+                    f"https://fapi.binance.com/fapi/v1/ticker/price?symbol={symbol}",
+                    timeout=2,
+                )
+                if not resp.ok:
+                    continue
+                current_price = float(resp.json()["price"])
+                entry = float(sig["entry"])
+                sl = float(sig["stop_loss"])
+                trace = sig.get("reason_trace") or {}
+                tp1 = float(trace.get("tp1") or sig["take_profit"])
+                r_dist = abs(entry - sl) if abs(entry - sl) > 1e-9 else 1e-9
+
+                if sig["side"] == "LONG":
+                    current_r = (current_price - entry) / r_dist
+                else:
+                    current_r = (entry - current_price) / r_dist
+
+                # Clamp: can't exceed TP or breach beyond SL
+                current_r = max(-1.0, min(2.0, current_r))
+
+                risk = running * _RISK_PER_ROW
+                dollar_pnl = current_r * risk
+                running += dollar_pnl
+
+                live_points.append({
+                    "pair": sig["pair"],
+                    "side": sig["side"],
+                    "current_price": round(current_price, 6),
+                    "current_r": round(current_r, 4),
+                    "dollar_pnl": round(dollar_pnl, 2),
+                    "balance": round(running, 2),
+                })
+            except Exception:
+                continue
+
+        return {
+            "base_balance": round(base_balance, 2),
+            "live_balance": round(running, 2),
+            "unrealized_pnl": round(running - base_balance, 2),
+            "open_count": len(live_points),
+            "live_points": live_points,
+            "fetched_at": datetime.now(timezone.utc).isoformat(),
+        }
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"error": str(e)})
 
 
 @app.get("/api/v1/paper-orders")
