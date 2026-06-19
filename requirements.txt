@@ -6,4 +6,4 @@ fastapi==0.115.0
 uvicorn==0.30.6
 python-telegram-bot==21.6
 python-dotenv==1.0.1
-moedge-engine
+./moedge_engine_v0_2_0
